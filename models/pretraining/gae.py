@@ -5,7 +5,6 @@ from torch_geometric.loader import DataLoader
 from torch_geometric.nn.models.autoencoder import GAE
 from torch.utils.tensorboard import SummaryWriter
 from torch_geometric.utils import negative_sampling
-
 from training.training_tools import FIGURE_SIZE_DEFAULT, MetricsHistoryTracer, EarlyStopping, EARLY_STOP_PATIENCE
 
 
