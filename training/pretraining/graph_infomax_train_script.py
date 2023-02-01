@@ -11,34 +11,30 @@ CORRUPTION_FUNC = partial(
 )
 
 REV_GAT_ENCODER = RevGATConvEncoder(
-    in_channels,
-    hidden_channels,
-    out_channels,
-    num_convs: int = 1,
-    dropout: float = 0.0,
-    project: bool = False, root_weight: bool = True,
-                                                                                                                                                 aggr: Optional[Union[str, list[str], Aggregation]] = "mean",
-                                                                                                                                                                                                      num_groups: int = 2, normalize_hidden: bool = True
-
+    in_channels      = 0,
+    hidden_channels  = 0,
+    out_channels     = 0,
+    num_convs        = 1,
+    dropout          = 0.0,
+    project          = False,
+    root_weight      = True,
+    aggr             = "mean",
+    num_groups       = 2,
+    normalize_hidden = True
 )
-
 
 
 def main():
     rev_gat_dgi = DGI(
-        in_channels=0,
-        hidden_channels=0,
-        out_channels=0,
-        encoder=REV_GAT_ENCODER,
-        normalize_hidden=True,
-        readout=readout_function,
-        corruption=CORRUPTION_FUNC,
-        dropout=0.0
+        in_channels      = 0,
+        hidden_channels  = 0,
+        out_channels     = 0,
+        encoder          = REV_GAT_ENCODER,
+        normalize_hidden = True,
+        readout          = readout_function,
+        corruption       = CORRUPTION_FUNC,
+        dropout          = 0.0
     )
-
-
-
-
 
 
 if __name__ == "__main__":

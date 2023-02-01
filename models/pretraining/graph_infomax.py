@@ -1,12 +1,14 @@
-from typing import Callable
+import os
 import torch
-import torch.nn.functional as F
-from torch.utils.data import RandomSampler
+from typing import Callable
 from torch.nn import LayerNorm
-from torch_geometric.nn.models import DeepGraphInfomax
-from torch_geometric.loader import DataLoader
+import torch.nn.functional as F
+from torch.utils.tensorboard import SummaryWriter
 from torch_geometric.data import Data
-
+from torch.utils.data import RandomSampler
+from torch_geometric.loader import DataLoader
+from torch_geometric.nn.models import DeepGraphInfomax
+from training.training_tools import FIGURE_SIZE_DEFAULT, MetricsHistoryTracer, EarlyStopping, EARLY_STOP_PATIENCE
 
 def readout_function():
     # TODO must implement summary_function
@@ -17,12 +19,15 @@ def random_sample_corruption(training_set: DataLoader, graph: Data) -> Data:
     """
     Takes a DataLoader and returns a single random sample from it.
 
+    :param graph:
+    :type graph: Data
     :param training_set: DataLoader
     :type training_set: DataLoader
     :return: A single sample from the training set.
     """
     corrupted_graph = graph
-    while corrupted_graph.edge_index == graph.edge_index:
+    # Check adj matrix, should be enough
+    while corrupted_graph.edge_index.equal(graph.edge_index):
         train_sample = RandomSampler(
             training_set,
             replacement=False,
@@ -33,7 +38,8 @@ def random_sample_corruption(training_set: DataLoader, graph: Data) -> Data:
     return corrupted_graph
 
 
-class DeepGraphInfomaxWrapper(torch.nn.Module):
+class DeepGraphInfomaxWrapper(DeepGraphInfomax):
+    # TODO check readout function inside the init
     def __init__(self,
                  in_channels: int,
                  hidden_channels: int,
@@ -44,78 +50,105 @@ class DeepGraphInfomaxWrapper(torch.nn.Module):
                  corruption: Callable = None,
                  dropout: float = 0.0
                  ):
-        super().__init__()
-        self.norm = LayerNorm(in_channels, elementwise_affine=True)
-
-        self.dgi = DeepGraphInfomax(
+        super().__init__(
             hidden_channels,
             encoder,
             readout,
             corruption
         )
 
+        self.__norm = None
         self.__in_channels = in_channels
         self.__hidden_channels = hidden_channels
         self.__out_channels = out_channels
         self.__normalize_hidden = normalize_hidden
-        self.dropout = dropout
+        self.__dropout = dropout
 
-    def forward(self, x, edge_index):
-        pos_z, neg_z, summary = self.dgi(x, edge_index)
+        if normalize_hidden:
+            self.__norm = LayerNorm(in_channels, elementwise_affine=True)
 
-        if self.norm is not None:
-            summary = self.norm(summary).relu()
+    @property
+    def dropout(self):
+        return self.__dropout
+
+    def forward(self, x, edge_index, *args, **kwargs):
+        pos_z, neg_z, summary = super().forward(x, edge_index, *args, **kwargs)
+
+        if self.__norm is not None:
+            summary = self.__norm(summary).relu()
         else:
             summary = F.relu(summary)
 
         # Apply dropout
-        summary = F.dropout(summary, p=self.dropout, training=self.training)
-        # Apply second projection if required
-        if self.lin2 is not None:
-            summary = self.lin2(summary)
+        if self.__dropout > 0:
+            summary = F.dropout(summary, p=self.__dropout, training=self.training)
+        return pos_z, neg_z, summary
 
-        return summary
+    def test_discriminator(self, x, edge_index, threshold=0.5, *args, **kwargs):
+        pos_z, neg_z, summary = self(x, edge_index, *args, **kwargs)
+
+        pos = self.discriminate(pos_z, summary, sigmoid=True)
+        neg = 1 - self.discriminate(neg_z, summary, sigmoid=True)
+
+        pos_pred = (pos >= threshold).float()
+        neg_pred = (neg >= threshold).float()
+
+        true_positive = torch.count_nonzero(pos_pred)
+        true_negative = torch.count_nonzero(neg_pred)
+        false_positive = neg_pred.shape[-1] - true_negative
+        false_negative = pos_pred.shape[-1] - true_positive
+
+        precision = true_positive/(true_positive + false_positive)
+        recall = true_negative/(true_positive + false_negative)
+        acc = (true_positive + true_negative)/(true_positive + true_negative + false_positive + false_negative)
+        f1_score = (2*precision*recall)/(precision + recall)
+
+        return precision, recall, acc, f1_score
 
 
-def train_step_D(model: VGAEv2, train_data: DataLoader, optimizer, device, use_edge_weight: bool = False,
+def train_step_DGI(model: DeepGraphInfomaxWrapper, train_data: DataLoader, optimizer, device, use_edge_weight: bool = False,
                     use_edge_attr: bool = False):
-    model.train()  # put the model in training mode
+    # put the model in training mode
+    model.train()
 
-    running_loss = 0.0  # running average loss over the batches
+    # running average loss over the batches
+    running_loss = 0.0
     steps: int = 1
 
     for data in iter(train_data):
-        data = data.to(device)  # move batch to device
-        optimizer.zero_grad()  # reset the optimizer gradients
+        # move batch to device
+        data = data.to(device)
+        # reset the optimizer gradients
+        optimizer.zero_grad()
 
         # Encoder output
         if use_edge_weight and use_edge_attr:
-            z = model.encode(data.x, data.edge_index, edge_attr=data.edge_attr, edge_weight=data.edge_weight)
+            pos_z, neg_z, summary = model(data.x, data.edge_index, edge_attr=data.edge_attr, edge_weight=data.edge_weight)
         elif use_edge_attr:
-            z = model.encode(data.x, data.edge_index, edge_attr=data.edge_attr)
+            pos_z, neg_z, summary = model(data.x, data.edge_index, edge_attr=data.edge_attr)
         elif use_edge_weight:
-            z = model.encode(data.x, data.edge_index, edge_weight=data.edge_weight)
+            pos_z, neg_z, summary = model(data.x, data.edge_index, edge_weight=data.edge_weight)
         else:
-            z = model.encode(data.x, data.edge_index)
+            pos_z, neg_z, summary = model(data.x, data.edge_index)
 
-        loss = model.recon_loss(z, data.edge_index)  # reconstruction loss
-        kl_divergence_loss = (1 / data.num_nodes) * model.kl_loss()  # KL-divergence loss, should work as mean on nodes
-        loss = loss + kl_divergence_loss
+        loss = model.loss(pos_z, neg_z, summary)
 
-        loss.backward()  # gradient update
-        optimizer.step()  # advance the optimizer state
+        # gradient update
+        loss.backward()
+        # advance the optimizer state
+        optimizer.step()
 
         # Update running average loss
         running_loss = running_loss + 1 / steps * (loss.item() - running_loss)
         steps += 1
-
     return float(running_loss)
 
 
 @torch.no_grad()
-def test_step_vgae(model: VGAEv2, val_data: DataLoader, device, use_edge_weight: bool = False,
-                   use_edge_attr: bool = False):
-    model.eval()  # put the model in evaluation mode
+def test_step_DGI(model: DeepGraphInfomaxWrapper, val_data: DataLoader, device, use_edge_weight: bool = False,
+                   use_edge_attr: bool = False, threshold = 0.5):
+    # put the model in evaluation mode
+    model.eval()
 
     # Running average for loss, precision and AUC
     running_val_loss = 0.0
@@ -124,37 +157,41 @@ def test_step_vgae(model: VGAEv2, val_data: DataLoader, device, use_edge_weight:
     steps: int = 1
 
     for data in iter(val_data):
-        data = data.to(device)  # move batch to device
+        # move batch to device
+        data = data.to(device)
 
         # Encoder output
         if use_edge_weight and use_edge_attr:
-            z = model.encode(data.x, data.edge_index, edge_attr=data.edge_attr, edge_weight=data.edge_weight)
+            pos_z, neg_z, summary = model(data.x, data.edge_index, edge_attr=data.edge_attr,
+                                          edge_weight=data.edge_weight)
         elif use_edge_attr:
-            z = model.encode(data.x, data.edge_index, edge_attr=data.edge_attr)
+            pos_z, neg_z, summary = model(data.x, data.edge_index, edge_attr=data.edge_attr)
         elif use_edge_weight:
-            z = model.encode(data.x, data.edge_index, edge_weight=data.edge_weight)
+            pos_z, neg_z, summary = model(data.x, data.edge_index, edge_weight=data.edge_weight)
         else:
-            z = model.encode(data.x, data.edge_index)
+            pos_z, neg_z, summary = model(data.x, data.edge_index)
 
-        loss = model.recon_loss(z, data.edge_index)  # reconstruction loss
-        kl_divergence_loss = (1 / data.num_nodes) * model.kl_loss()  # KL-divergence loss, should work as mean on nodes
-        loss = loss + kl_divergence_loss
-        running_val_loss = running_val_loss + 1 / steps * (
-                loss.item() - running_val_loss)  # update loss running average
+        loss = model.loss(pos_z, neg_z, summary)
+        precision, recall, accuracy, f1 = model.test_discriminator(data.x, data.edge_index, threshold)
 
-        # Update AUC and precision running averages
-        neg_edge_index = negative_sampling(data.edge_index, z.size(0))
-        auc, avg_precision = model.test(z, pos_edge_index=data.edge_index, neg_edge_index=neg_edge_index)
-        running_auc = running_auc + 1 / steps * (auc - running_auc)
-        running_precision = running_precision + 1 / steps * (avg_precision - running_precision)
+        running_val_loss = 0
+        running_precision = 0
+        running_recall = 0
+        running_accuracy = 0
+        running_f1 = 0
+
+        running_val_loss = running_val_loss + 1 / steps * (loss.item() - running_val_loss)
+        running_precision = running_precision + 1 / steps * (precision - running_precision)
+        running_recall = running_recall + 1 / steps * (recall - running_recall)
+        running_accuracy = running_accuracy + 1 / steps * (accuracy - running_accuracy)
+        running_f1 = running_f1 + 1 / steps * (f1 - running_f1)
+
         steps += 1
+    return float(running_precision), float(running_recall), float(running_accuracy), float(running_f1), float(running_val_loss)
 
-    return float(running_val_loss), running_auc, running_precision
-
-
-def train_vgae(model: VGAEv2, train_data: DataLoader, val_data: DataLoader, epochs: int, optimizer,
+def train_DGI(model: DeepGraphInfomaxWrapper, train_data: DataLoader, val_data: DataLoader, epochs: int, optimizer,
                experiment_path: str, experiment_name: str, use_edge_weight: bool = False, use_edge_attr: bool = False,
-               early_stopping_patience: int = EARLY_STOP_PATIENCE, early_stopping_delta: float = 0) -> torch.nn.Module:
+               early_stopping_patience: int = EARLY_STOP_PATIENCE, early_stopping_delta: float = 0, threshold = 0.5) -> torch.nn.Module:
     # Move model to device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
@@ -173,13 +210,19 @@ def train_vgae(model: VGAEv2, train_data: DataLoader, val_data: DataLoader, epoc
 
     # Metric history trace object
     mht = MetricsHistoryTracer(
-        metrics=['train_loss', 'val_loss', 'auc_val', 'avg_precision_val'],
-        name="VGAE training metrics"
+        metrics=[
+            "avg_precision",
+            "avg_recall",
+            "avg_accuracy",
+            "avg_f1",
+            "avg_val_loss",
+        ],
+        name="DGI training metrics"
     )
 
     for epoch in range(0, epochs):
         # Do train step
-        train_loss = train_step_vgae(
+        train_loss = train_step_DGI(
             model=model,
             train_data=train_data,
             optimizer=optimizer,
@@ -189,22 +232,33 @@ def train_vgae(model: VGAEv2, train_data: DataLoader, val_data: DataLoader, epoc
         )
 
         # Do validation step
-        val_loss, auc, avg_precision = test_step_vgae(
+        avg_precision, avg_recall, avg_accuracy, avg_f1, val_loss = test_step_DGI(
             model=model,
             val_data=val_data,
             device=device,
             use_edge_weight=use_edge_weight,
-            use_edge_attr=use_edge_attr
+            use_edge_attr=use_edge_attr,
+            threshold=threshold
         )
 
-        print('Epoch: {:d}, Train loss: {:.4f}, Validation loss {:.4f}, '
-              'AUC: {:.4f}, Average precision: {:.4f}'.format(epoch, train_loss, val_loss, auc, avg_precision))
+        print('Epoch: {:d}, Train loss: {:.4f}, Validation loss {:.4f}, ' 'Average: {:.4f}, Average precision: {:.4f}'.
+        format(
+            epoch,
+            train_loss,
+            val_loss,
+            avg_precision,
+            avg_recall,
+            avg_accuracy,
+            avg_f1
+        ))
 
         # Tensorboard state update
         writer.add_scalar('train_loss', train_loss, epoch)
-        writer.add_scalar('auc_val', auc, epoch)  # new line
         writer.add_scalar('val_loss', val_loss, epoch)
-        writer.add_scalar('avg_precision_val', avg_precision, epoch)  # new line
+        writer.add_scalar('avg_precision', avg_precision, epoch)
+        writer.add_scalar('avg_recall', avg_recall, epoch)
+        writer.add_scalar('avg_accuracy', avg_accuracy, epoch)
+        writer.add_scalar('avg_f1', avg_f1, epoch)
 
         # Check for early-stopping stuff
         monitor(val_loss, model)
@@ -215,32 +269,43 @@ def train_vgae(model: VGAEv2, train_data: DataLoader, val_data: DataLoader, epoc
         # Metrics history update
         mht.add_scalar('train_loss', train_loss)
         mht.add_scalar('val_loss', val_loss)
-        mht.add_scalar('auc_val', auc)
-        mht.add_scalar('avg_precision_val', avg_precision)
+        mht.add_scalar('avg_precision', avg_precision)
+        mht.add_scalar('avg_recall', avg_recall)
+        mht.add_scalar('avg_accuracy', avg_accuracy)
+        mht.add_scalar('avg_f1', avg_f1)
+
 
     # Plot the metrics
     mht.plot_metrics(
-        ['train_loss', 'val_loss'],
+        [
+            'train_loss',
+            'val_loss',
+        ],
         figsize=FIGURE_SIZE_DEFAULT,
         traced_min_metric='val_loss',
         store_path=os.path.join(f"{experiment_path}", "loss.svg")
     )
 
     mht.plot_metrics(
-        ['auc_val'],
+        [
+            "avg_precision",
+            "avg_recall",
+            "avg_f1",
+        ],
         figsize=FIGURE_SIZE_DEFAULT,
-        traced_min_metric='auc_val',
-        store_path=os.path.join(f"{experiment_path}", "auc.svg")
+        traced_min_metric='prec_rec_f1_val',
+        store_path=os.path.join(f"{experiment_path}", "prec_rec_f1.svg")
     )
 
     mht.plot_metrics(
-        ['avg_precision_val'],
+        [
+            'avg_accuracy',
+        ],
         figsize=FIGURE_SIZE_DEFAULT,
-        traced_min_metric='avg_precision_val',
-        store_path=os.path.join(f"{experiment_path}", "avg_precision.svg")
+        traced_min_metric='avg_accuracy_val',
+        store_path=os.path.join(f"{experiment_path}", "avg_accuracy.svg")
     )
 
     # Load best model
     model.load_state_dict(torch.load(checkpoint_path))
-
     return model
