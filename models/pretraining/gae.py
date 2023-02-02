@@ -1,5 +1,5 @@
 import os
-from typing import Optional, Any, Type
+from typing import Optional, Type
 import torch
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn.models.autoencoder import GAE
@@ -30,18 +30,21 @@ class GAEv2(GAE, SerializableModule):
 
     # noinspection PyTypedDict
     def serialize_constructor_params(self, *args, **kwargs) -> dict:
+
+        # Serialize encoder
         constructor_params = {}
         constructor_params["encoder"] = {
             "state_dict": self.encoder.state_dict(),
             "constructor_params": self.encoder.serialize_constructor_params()
         }
+
+        # Serialize decoder if required
+        constructor_params["decoder"] = None
         if self.__serialize_decoder:
             constructor_params["decoder"] = {
                 "state_dict": self.decoder.state_dict(),
                 "constructor_params": self.decoder.serialize_constructor_params()
             }
-        else:
-            constructor_params["decoder"] = None
 
         return constructor_params
 
@@ -56,13 +59,12 @@ class GAEv2(GAE, SerializableModule):
         encoder.load_state_dict(state_dict=enc_state_dict)  # set weights
 
         # If required, get decoder constructor params/state dict and construct it
+        decoder = None
         if constructor_params["decoder"] is not None:
             dec_state_dict = constructor_params["decoder"]["state_dict"]
             dec_constructor_params = constructor_params["decoder"]["constructor_params"]
             decoder = decoder_constructor.from_constructor_params(dec_constructor_params)  # construct decoder
             decoder.load_state_dict(state_dict=dec_state_dict)  # set weights
-        else:
-            decoder = None
 
         return cls(encoder=encoder, decoder=decoder)
 

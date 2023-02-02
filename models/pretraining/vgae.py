@@ -15,10 +15,10 @@ class VGEncoder(SerializableModule):
                  encoder_logstd: Optional[SerializableModule] = None):
         super(VGEncoder, self).__init__()
         self._encoder = encoder
-        self._encoder_mu = encoder if encoder_mu is None else copy.deepcopy(encoder)
-        self._encoder_logstd = encoder if encoder_logstd is None else copy.deepcopy(encoder)
-        self.__serialize_encoder_logstd = encoder_logstd is not None
-        self.__serialize_encoder_mu = encoder_mu is not None
+        self._encoder_mu = encoder_mu if encoder_mu is not None else copy.deepcopy(encoder)
+        self._encoder_logstd = encoder_logstd if encoder_logstd is not None else copy.deepcopy(encoder)
+        self.__encoder_logstd_given = encoder_logstd is not None
+        self.__encoder_mu_given = encoder_mu is not None
 
     def forward(self, x, edge_index, *args, **kwargs):
         x_enc = self._encoder(x, edge_index, *args, **kwargs)
@@ -27,26 +27,28 @@ class VGEncoder(SerializableModule):
 
     # noinspection PyTypedDict
     def serialize_constructor_params(self, *args, **kwargs) -> dict:
-        constructor_params = {}
+        constructor_params = {
+            "encoder_mu_given": self.__encoder_mu_given,
+            "encoder_logstd_given": self.__encoder_logstd_given
+        }
+
+        # Encoder params and weights
         constructor_params["encoder"] = {
             "state_dict": self._encoder.state_dict(),
             "constructor_params": self._encoder.serialize_constructor_params()
         }
-        if self.__serialize_encoder_logstd:
-            constructor_params["encoder_logstd"] = {
-                "state_dict": self._encoder_logstd.state_dict(),
-                "constructor_params": self._encoder_logstd.serialize_constructor_params()
-            }
-        else:
-            constructor_params["encoder_logstd"] = None
 
-        if self.__serialize_encoder_mu:
-            constructor_params["encoder_mu"] = {
-                "state_dict": self._encoder_mu.state_dict(),
-                "constructor_params": self._encoder_mu.serialize_constructor_params()
-            }
-        else:
-            constructor_params["encoder_mu"] = None
+        # Encoder logstd params and weights
+        constructor_params["encoder_logstd"] = {
+            "state_dict": self._encoder_logstd.state_dict(),
+            "constructor_params": self._encoder_logstd.serialize_constructor_params()
+        }
+
+        # Encoder mu params and weights
+        constructor_params["encoder_mu"] = {
+            "state_dict": self._encoder_mu.state_dict(),
+            "constructor_params": self._encoder_mu.serialize_constructor_params()
+        }
 
         return constructor_params
 
@@ -55,28 +57,30 @@ class VGEncoder(SerializableModule):
     def from_constructor_params(cls, constructor_params: dict[str, Any], encoder_constructor: Type[SerializableModule],
                                 encoder_mu_constructor: Optional[Type[SerializableModule]] = None,
                                 encoder_logstd_constructor: Optional[Type[SerializableModule]] = None, *args, **kwargs):
+
+        # If encoder_mu and/or encoder_logstd constructors are not given, their class will be the same as the encoder
+        if not constructor_params["encoder_mu_given"]:
+            encoder_mu_constructor = encoder_constructor
+        if not constructor_params["encoder_logstd_given"]:
+            encoder_logstd_constructor = encoder_constructor
+
         # Get encoder constructor params/state dict and construct it
         enc_state_dict = constructor_params["encoder"]["state_dict"]
         enc_constructor_params = constructor_params["encoder"]["constructor_params"]
         encoder = encoder_constructor.from_constructor_params(enc_constructor_params)  # construct encoder
         encoder.load_state_dict(state_dict=enc_state_dict)  # set weights
 
-        # If required, get decoder constructor params/state dict and construct it
-        if constructor_params["encoder_mu"] is not None:
-            enc_mu_state_dict = constructor_params["encoder_mu"]["state_dict"]
-            enc_mu_constructor_params = constructor_params["encoder_mu"]["constructor_params"]
-            encoder_mu = encoder_mu_constructor.from_constructor_params(enc_mu_constructor_params)
-            encoder_mu.load_state_dict(state_dict=enc_mu_state_dict)  # set weights
-        else:
-            encoder_mu = None
+        # Construct mu encoder
+        enc_mu_state_dict = constructor_params["encoder_mu"]["state_dict"]
+        enc_mu_constructor_params = constructor_params["encoder_mu"]["constructor_params"]
+        encoder_mu = encoder_mu_constructor.from_constructor_params(enc_mu_constructor_params)
+        encoder_mu.load_state_dict(state_dict=enc_mu_state_dict)  # set weights
 
-        if constructor_params["encoder_logstd"] is not None:
-            enc_logstd_state_dict = constructor_params["encoder_logstd"]["state_dict"]
-            enc_logstd_constructor_params = constructor_params["encoder_logstd"]["constructor_params"]
-            encoder_logstd = encoder_logstd_constructor.from_constructor_params(enc_logstd_constructor_params)
-            encoder_logstd.load_state_dict(state_dict=enc_logstd_state_dict)  # set weights
-        else:
-            encoder_logstd = None
+        # Construct logstd encoder
+        enc_logstd_state_dict = constructor_params["encoder_logstd"]["state_dict"]
+        enc_logstd_constructor_params = constructor_params["encoder_logstd"]["constructor_params"]
+        encoder_logstd = encoder_logstd_constructor.from_constructor_params(enc_logstd_constructor_params)
+        encoder_logstd.load_state_dict(state_dict=enc_logstd_state_dict)  # set weights
 
         return cls(encoder=encoder, encoder_mu=encoder_mu, encoder_logstd=encoder_logstd)
 
@@ -92,6 +96,7 @@ class VGAEv2(VGAE, SerializableModule):
         :type decoder: Optional[torch.nn.Module]
         """
         super(VGAEv2, self).__init__(encoder=encoder, decoder=decoder)
+        self.__serialize_decoder = decoder is not None  # True if decoder is not None, False otherwise
 
     def forward(self, x, edge_index, sigmoid: bool = True, *args, **kwargs):
         mu, log_std = self.encode(x, edge_index, *args, **kwargs)
@@ -102,17 +107,20 @@ class VGAEv2(VGAE, SerializableModule):
     # noinspection PyTypedDict
     def serialize_constructor_params(self, *args, **kwargs) -> dict:
         constructor_params = {}
+
+        # Serialize encoder
         constructor_params["encoder"] = {
             "state_dict": self.encoder.state_dict(),
             "constructor_params": self.encoder.serialize_constructor_params()
         }
+
+        constructor_params["decoder"] = None
+        # Serialize decoder if required
         if self.__serialize_decoder:
             constructor_params["decoder"] = {
                 "state_dict": self.decoder.state_dict(),
                 "constructor_params": self.decoder.serialize_constructor_params()
             }
-        else:
-            constructor_params["decoder"] = None
 
         return constructor_params
 
@@ -124,7 +132,9 @@ class VGAEv2(VGAE, SerializableModule):
                                 encoder_constructor: Type[SerializableModule],
                                 encoder_mu_constructor: Optional[Type[SerializableModule]] = None,
                                 encoder_logstd_constructor: Optional[Type[SerializableModule]] = None,
-                                decoder_constructor: Optional[Type[SerializableModule]] = None, *args, **kwargs):
+                                decoder_constructor: Optional[Type[SerializableModule]] = None,
+                                *args, **kwargs):
+
         # Get encoder constructor params/state dict and construct it
         enc_state_dict = constructor_params["encoder"]["state_dict"]
         enc_constructor_params = constructor_params["encoder"]["constructor_params"]
@@ -137,13 +147,12 @@ class VGAEv2(VGAE, SerializableModule):
         encoder.load_state_dict(state_dict=enc_state_dict)  # set weights
 
         # If required, get decoder constructor params/state dict and construct it
+        decoder = None
         if constructor_params["decoder"] is not None:
             dec_state_dict = constructor_params["decoder"]["state_dict"]
             dec_constructor_params = constructor_params["decoder"]["constructor_params"]
             decoder = decoder_constructor.from_constructor_params(dec_constructor_params)  # construct decoder
             decoder.load_state_dict(state_dict=dec_state_dict)  # set weights
-        else:
-            decoder = None
 
         return cls(encoder=encoder, decoder=decoder)
 
@@ -315,4 +324,3 @@ def train_vgae(model: VGAEv2, train_data: DataLoader, val_data: DataLoader, epoc
     model.load_state_dict(torch.load(checkpoint_path))
 
     return model
-

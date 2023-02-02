@@ -1,6 +1,6 @@
 import os
 import torch
-from typing import Callable
+from typing import Callable, Type
 from torch.nn import LayerNorm
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
@@ -8,6 +8,7 @@ from torch_geometric.data import Data
 from torch.utils.data import RandomSampler
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn.models import DeepGraphInfomax
+from models.layers import SerializableModule
 from training.training_tools import FIGURE_SIZE_DEFAULT, MetricsHistoryTracer, EarlyStopping, EARLY_STOP_PATIENCE
 
 
@@ -42,44 +43,88 @@ def random_sample_corruption(training_set: DataLoader, graph: Data) -> Data:
     return corrupted_graph
 
 
-class DeepGraphInfomaxWrapper(DeepGraphInfomax):
+class DeepGraphInfomaxWrapper(DeepGraphInfomax, SerializableModule):
     # TODO check readout function inside the init
     def __init__(self,
-                 in_channels: int,
                  hidden_channels: int,
-                 out_channels: int,
-                 encoder: torch.nn.Module,
+                 encoder: SerializableModule,
+                 readout: Callable,
+                 corruption: Callable,
                  normalize_hidden: bool = True,
-                 readout: Callable = None,
-                 corruption: Callable = None,
                  dropout: float = 0.0
                  ):
-        super().__init__(
-            hidden_channels,
-            encoder,
-            readout,
-            corruption
-        )
+        super().__init__(hidden_channels=hidden_channels, encoder=encoder, summary=readout, corruption=corruption)
 
-        self.__norm = None
-        self.__in_channels = in_channels
+        self._norm = None
         self.__hidden_channels = hidden_channels
-        self.__out_channels = out_channels
         self.__normalize_hidden = normalize_hidden
         self.__dropout = dropout
 
         if normalize_hidden:
-            self.__norm = LayerNorm(in_channels, elementwise_affine=True)
+            self._norm = LayerNorm(hidden_channels, elementwise_affine=True)
 
     @property
-    def dropout(self):
+    def dropout(self) -> float:
         return self.__dropout
+
+    @property
+    def hidden_channels(self) -> int:
+        return self.__hidden_channels
+
+    @property
+    def normalize_hidden(self) -> bool:
+        return self.__normalize_hidden
+
+    # noinspection PyTypedDict
+    def serialize_constructor_params(self, *args, **kwargs) -> dict:
+
+        constructor_params = {
+            "hidden_channels": self.__hidden_channels,
+            "dropout": self.__dropout,
+            "normalize_hidden": self.__normalize_hidden
+        }
+
+        # Serialize encoder
+        constructor_params["encoder"] = {
+            "state_dict": self.encoder.state_dict(),
+            "constructor_params": self.encoder.serialize_constructor_params()
+        }
+
+        return constructor_params
+
+    # noinspection PyMethodOverriding
+    @classmethod
+    def from_constructor_params(cls,
+                                constructor_params: dict,
+                                encoder_constructor: Type[SerializableModule],
+                                readout: Callable,
+                                corruption: Callable,
+                                *args, **kwargs):
+        # Get encoder constructor params/state dict and construct it
+        enc_state_dict = constructor_params["encoder"]["state_dict"]
+        enc_constructor_params = constructor_params["encoder"]["constructor_params"]
+        encoder = encoder_constructor.from_constructor_params(enc_constructor_params)  # construct encoder
+        encoder.load_state_dict(state_dict=enc_state_dict)  # set weights
+
+        # Get other params
+        hidden_channels = constructor_params["hidden_channels"]
+        normalize_hidden = constructor_params["normalize_hidden"]
+        dropout = constructor_params["dropout"]
+
+        return cls(
+            hidden_channels=hidden_channels,
+            encoder=encoder,
+            readout=readout,
+            corruption=corruption,
+            normalize_hidden=normalize_hidden,
+            dropout=dropout
+        )
 
     def forward(self, x, edge_index, *args, **kwargs):
         pos_z, neg_z, summary = super().forward(x, edge_index, *args, **kwargs)
 
-        if self.__norm is not None:
-            summary = self.__norm(summary).relu()
+        if self._norm is not None:
+            summary = self._norm(summary).relu()
         else:
             summary = F.relu(summary)
 
@@ -90,8 +135,8 @@ class DeepGraphInfomaxWrapper(DeepGraphInfomax):
 
     def test_discriminator(self, x, edge_index, threshold=0.5, *args, **kwargs):
         """
-        The function takes in the model, the data, and a threshold value. It then calculates the precision, recall,
-        accuracy, and f1 score of the model
+        Takes in the model, the data, and a threshold value. It then calculates the precision, recall, accuracy, and f1
+        score of the model.
 
         :param x: the node features
         :param edge_index: The edge index of the graph
