@@ -20,11 +20,11 @@ def random_sample_corruption(training_set: DataLoader, graph: Data) -> Data:
     """
     Takes a DataLoader and returns a single random sample from it.
 
-    :param graph:
+    :param graph: graph data batch
     :type graph: Data
-    :param training_set: DataLoader
+    :param training_set: DataLoader of the graph dataset
     :type training_set: DataLoader
-    :return: A single sample from the training set.
+    :return: A single batch sample from the training set.
     """
     corrupted_graph = graph
     # Check adj matrix, should be enough

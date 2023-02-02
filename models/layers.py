@@ -1,3 +1,4 @@
+from abc import ABC, abstractmethod
 from typing import Union, Optional
 import torch
 from torch import Tensor
@@ -5,6 +6,22 @@ from torch.nn import LayerNorm
 from torch_geometric.nn.conv import SAGEConv, GATv2Conv, GATConv, GCNConv, GCN2Conv
 from torch_geometric.nn.aggr import Aggregation
 from torch_geometric.typing import OptTensor, Adj
+
+
+class SerializableModule(torch.nn.Module, ABC):
+    def __init__(self, *args, **kwargs):
+        super(SerializableModule, self).__init__()
+
+    @abstractmethod
+    def serialize_constructor_params(self, *args, **kwargs) -> dict:
+        """
+        Returns a dictionary of the parameters that were passed to the constructor of the module.
+        """
+        raise NotImplementedError("Any serializable module must implement serialize_constructor_params() method.")
+
+    @classmethod
+    def from_constructor_params(cls, constructor_params: dict, *args, **kwargs):
+        return cls(**constructor_params)
 
 
 class SAGEConvBlock(torch.nn.Module):

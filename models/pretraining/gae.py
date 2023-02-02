@@ -1,15 +1,17 @@
 import os
-from typing import Optional
+from typing import Optional, Any, Type
 import torch
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn.models.autoencoder import GAE
 from torch.utils.tensorboard import SummaryWriter
 from torch_geometric.utils import negative_sampling
+from models.layers import SerializableModule
 from training.training_tools import FIGURE_SIZE_DEFAULT, MetricsHistoryTracer, EarlyStopping, EARLY_STOP_PATIENCE
 
 
-class GAEv2(GAE):
-    def __init__(self, encoder: torch.nn.Module, decoder: Optional[torch.nn.Module] = None):
+class GAEv2(GAE, SerializableModule):
+
+    def __init__(self, encoder: SerializableModule, decoder: Optional[SerializableModule] = None):
         """
         GAE sub-class with a simple forward function implemented.
 
@@ -19,11 +21,50 @@ class GAEv2(GAE):
         :type decoder: Optional[torch.nn.Module]
         """
         super(GAEv2, self).__init__(encoder=encoder, decoder=decoder)
+        self.__serialize_decoder = decoder is not None  # True if decoder is not None, False otherwise
 
     def forward(self, x, edge_index, sigmoid: bool = True, *args, **kwargs):
         z = self.encode(x, edge_index, *args, **kwargs)
         adj_rec = self.decode(z, sigmoid=sigmoid)
         return adj_rec
+
+    # noinspection PyTypedDict
+    def serialize_constructor_params(self, *args, **kwargs) -> dict:
+        constructor_params = {}
+        constructor_params["encoder"] = {
+            "state_dict": self.encoder.state_dict(),
+            "constructor_params": self.encoder.serialize_constructor_params()
+        }
+        if self.__serialize_decoder:
+            constructor_params["decoder"] = {
+                "state_dict": self.decoder.state_dict(),
+                "constructor_params": self.decoder.serialize_constructor_params()
+            }
+        else:
+            constructor_params["decoder"] = None
+
+        return constructor_params
+
+    # noinspection PyMethodOverriding
+    @classmethod
+    def from_constructor_params(cls, constructor_params: dict, encoder_constructor: Type[SerializableModule],
+                                decoder_constructor: Optional[Type[SerializableModule]] = None, *args, **kwargs):
+        # Get encoder constructor params/state dict and construct it
+        enc_state_dict = constructor_params["encoder"]["state_dict"]
+        enc_constructor_params = constructor_params["encoder"]["constructor_params"]
+        encoder = encoder_constructor.from_constructor_params(enc_constructor_params)  # construct encoder
+        encoder.load_state_dict(state_dict=enc_state_dict)  # set weights
+
+        # If required, get decoder constructor params/state dict and construct it
+        if constructor_params["decoder"] is not None:
+            dec_state_dict = constructor_params["decoder"]["state_dict"]
+            dec_constructor_params = constructor_params["decoder"]["constructor_params"]
+            decoder = decoder_constructor.from_constructor_params(dec_constructor_params)  # construct decoder
+            decoder.load_state_dict(state_dict=dec_state_dict)  # set weights
+        else:
+            decoder = None
+
+        return cls(encoder=encoder, decoder=decoder)
 
 
 def train_step_gae(model: GAEv2, train_data: DataLoader, optimizer, device, use_edge_weight: bool = False,
