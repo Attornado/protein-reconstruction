@@ -11,6 +11,9 @@ from torch_geometric.nn.models import DeepGraphInfomax
 from training.training_tools import FIGURE_SIZE_DEFAULT, MetricsHistoryTracer, EarlyStopping, EARLY_STOP_PATIENCE
 
 
+# TODO: implement serialization for DGI
+
+
 def readout_function():
     # TODO must implement summary_function
     pass

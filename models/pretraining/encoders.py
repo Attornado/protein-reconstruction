@@ -1,4 +1,4 @@
-from typing import Optional, Union, Any
+from typing import Optional, Union
 import torch
 import torch.nn.functional as F
 from torch.nn import LayerNorm, Linear
