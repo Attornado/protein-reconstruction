@@ -21,6 +21,15 @@ class SerializableModule(torch.nn.Module, ABC):
 
     @classmethod
     def from_constructor_params(cls, constructor_params: dict, *args, **kwargs):
+        """
+        Takes a module class and a dictionary of constructor parameters, and returns an instance of the class with the
+        constructor parameters set to the values in the dictionary.
+
+        :param cls: The class that the method is being called on
+        :param constructor_params: a dictionary of the parameters that will be passed to the constructor
+        :type constructor_params: dict
+        :return: The class itself.
+        """
         return cls(**constructor_params)
 
 
