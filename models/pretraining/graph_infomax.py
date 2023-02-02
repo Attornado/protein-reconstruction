@@ -10,6 +10,7 @@ from torch_geometric.loader import DataLoader
 from torch_geometric.nn.models import DeepGraphInfomax
 from training.training_tools import FIGURE_SIZE_DEFAULT, MetricsHistoryTracer, EarlyStopping, EARLY_STOP_PATIENCE
 
+
 def readout_function():
     # TODO must implement summary_function
     pass
@@ -85,6 +86,15 @@ class DeepGraphInfomaxWrapper(DeepGraphInfomax):
         return pos_z, neg_z, summary
 
     def test_discriminator(self, x, edge_index, threshold=0.5, *args, **kwargs):
+        """
+        The function takes in the model, the data, and a threshold value. It then calculates the precision, recall,
+        accuracy, and f1 score of the model
+
+        :param x: the node features
+        :param edge_index: The edge index of the graph
+        :param threshold: The threshold for the discriminator to classify a node as positive or negative
+        :return: Precision, recall, accuracy, and f1 score.
+        """
         pos_z, neg_z, summary = self(x, edge_index, *args, **kwargs)
 
         pos = self.discriminate(pos_z, summary, sigmoid=True)
@@ -98,16 +108,16 @@ class DeepGraphInfomaxWrapper(DeepGraphInfomax):
         false_positive = neg_pred.shape[-1] - true_negative
         false_negative = pos_pred.shape[-1] - true_positive
 
-        precision = true_positive/(true_positive + false_positive)
-        recall = true_negative/(true_positive + false_negative)
-        acc = (true_positive + true_negative)/(true_positive + true_negative + false_positive + false_negative)
-        f1_score = (2*precision*recall)/(precision + recall)
+        precision = true_positive / (true_positive + false_positive)
+        recall = true_negative / (true_positive + false_negative)
+        acc = (true_positive + true_negative) / (true_positive + true_negative + false_positive + false_negative)
+        f1_score = (2 * precision * recall) / (precision + recall)
 
         return precision, recall, acc, f1_score
 
 
-def train_step_DGI(model: DeepGraphInfomaxWrapper, train_data: DataLoader, optimizer, device, use_edge_weight: bool = False,
-                    use_edge_attr: bool = False):
+def train_step_DGI(model: DeepGraphInfomaxWrapper, train_data: DataLoader, optimizer, device,
+                   use_edge_weight: bool = False, use_edge_attr: bool = False):
     # put the model in training mode
     model.train()
 
@@ -123,7 +133,12 @@ def train_step_DGI(model: DeepGraphInfomaxWrapper, train_data: DataLoader, optim
 
         # Encoder output
         if use_edge_weight and use_edge_attr:
-            pos_z, neg_z, summary = model(data.x, data.edge_index, edge_attr=data.edge_attr, edge_weight=data.edge_weight)
+            pos_z, neg_z, summary = model(
+                data.x,
+                data.edge_index,
+                edge_attr=data.edge_attr,
+                edge_weight=data.edge_weight
+            )
         elif use_edge_attr:
             pos_z, neg_z, summary = model(data.x, data.edge_index, edge_attr=data.edge_attr)
         elif use_edge_weight:
@@ -146,14 +161,16 @@ def train_step_DGI(model: DeepGraphInfomaxWrapper, train_data: DataLoader, optim
 
 @torch.no_grad()
 def test_step_DGI(model: DeepGraphInfomaxWrapper, val_data: DataLoader, device, use_edge_weight: bool = False,
-                   use_edge_attr: bool = False, threshold = 0.5):
+                  use_edge_attr: bool = False, threshold: float = 0.5):
     # put the model in evaluation mode
     model.eval()
 
     # Running average for loss, precision and AUC
-    running_val_loss = 0.0
-    running_auc = 0.0
-    running_precision = 0.0
+    running_val_loss = 0
+    running_precision = 0
+    running_recall = 0
+    running_accuracy = 0
+    running_f1 = 0
     steps: int = 1
 
     for data in iter(val_data):
@@ -174,12 +191,6 @@ def test_step_DGI(model: DeepGraphInfomaxWrapper, val_data: DataLoader, device, 
         loss = model.loss(pos_z, neg_z, summary)
         precision, recall, accuracy, f1 = model.test_discriminator(data.x, data.edge_index, threshold)
 
-        running_val_loss = 0
-        running_precision = 0
-        running_recall = 0
-        running_accuracy = 0
-        running_f1 = 0
-
         running_val_loss = running_val_loss + 1 / steps * (loss.item() - running_val_loss)
         running_precision = running_precision + 1 / steps * (precision - running_precision)
         running_recall = running_recall + 1 / steps * (recall - running_recall)
@@ -187,11 +198,14 @@ def test_step_DGI(model: DeepGraphInfomaxWrapper, val_data: DataLoader, device, 
         running_f1 = running_f1 + 1 / steps * (f1 - running_f1)
 
         steps += 1
-    return float(running_precision), float(running_recall), float(running_accuracy), float(running_f1), float(running_val_loss)
+    return float(running_precision), float(running_recall), float(running_accuracy), float(running_f1), \
+        float(running_val_loss)
+
 
 def train_DGI(model: DeepGraphInfomaxWrapper, train_data: DataLoader, val_data: DataLoader, epochs: int, optimizer,
-               experiment_path: str, experiment_name: str, use_edge_weight: bool = False, use_edge_attr: bool = False,
-               early_stopping_patience: int = EARLY_STOP_PATIENCE, early_stopping_delta: float = 0, threshold = 0.5) -> torch.nn.Module:
+              experiment_path: str, experiment_name: str, use_edge_weight: bool = False, use_edge_attr: bool = False,
+              early_stopping_patience: int = EARLY_STOP_PATIENCE, early_stopping_delta: float = 0,
+              threshold: float = 0.5) -> torch.nn.Module:
     # Move model to device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
@@ -241,16 +255,18 @@ def train_DGI(model: DeepGraphInfomaxWrapper, train_data: DataLoader, val_data: 
             threshold=threshold
         )
 
-        print('Epoch: {:d}, Train loss: {:.4f}, Validation loss {:.4f}, ' 'Average: {:.4f}, Average precision: {:.4f}'.
-        format(
-            epoch,
-            train_loss,
-            val_loss,
-            avg_precision,
-            avg_recall,
-            avg_accuracy,
-            avg_f1
-        ))
+        print(
+            'Epoch: {:d}, Train loss: {:.4f}, Validation loss {:.4f}, ' 'Average: {:.4f}, Average precision: {:.4f}'
+            .format(
+                epoch,
+                train_loss,
+                val_loss,
+                avg_precision,
+                avg_recall,
+                avg_accuracy,
+                avg_f1
+            )
+        )
 
         # Tensorboard state update
         writer.add_scalar('train_loss', train_loss, epoch)
@@ -274,7 +290,6 @@ def train_DGI(model: DeepGraphInfomaxWrapper, train_data: DataLoader, val_data: 
         mht.add_scalar('avg_accuracy', avg_accuracy)
         mht.add_scalar('avg_f1', avg_f1)
 
-
     # Plot the metrics
     mht.plot_metrics(
         [
@@ -293,7 +308,7 @@ def train_DGI(model: DeepGraphInfomaxWrapper, train_data: DataLoader, val_data: 
             "avg_f1",
         ],
         figsize=FIGURE_SIZE_DEFAULT,
-        traced_min_metric='prec_rec_f1_val',
+        traced_min_metric='avg_f1',
         store_path=os.path.join(f"{experiment_path}", "prec_rec_f1.svg")
     )
 
@@ -302,7 +317,7 @@ def train_DGI(model: DeepGraphInfomaxWrapper, train_data: DataLoader, val_data: 
             'avg_accuracy',
         ],
         figsize=FIGURE_SIZE_DEFAULT,
-        traced_min_metric='avg_accuracy_val',
+        traced_min_metric='avg_accuracy',
         store_path=os.path.join(f"{experiment_path}", "avg_accuracy.svg")
     )
 
