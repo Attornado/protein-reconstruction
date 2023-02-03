@@ -148,7 +148,8 @@ class RevSAGEConvEncoder(SerializableModule):
 class RevGATConvEncoder(SerializableModule):
     def __init__(self, in_channels: int, hidden_channels: int, out_channels: int, num_convs: int = 1,
                  dropout: float = 0.0, version: str = "v2", edge_dim: Optional[int] = None, heads: int = 1,
-                 num_groups: int = 2, normalize_hidden: bool = True):
+                 concat: bool = False, num_groups: int = 2, normalize_hidden: bool = True):
+
         super().__init__()
 
         self.dropout = dropout
@@ -159,6 +160,7 @@ class RevGATConvEncoder(SerializableModule):
         self.__version = version
         self.__edge_dim = edge_dim
         self.__heads = heads
+        self.__concat = concat
         self.__num_groups = num_groups
         self.lin1 = None
         self.lin2 = None
@@ -187,10 +189,10 @@ class RevGATConvEncoder(SerializableModule):
                 version=version,
                 heads=heads,
                 edge_dim=edge_dim,
+                concat=concat,
                 bias=True,
                 add_self_loops=True,
                 negative_slope=0.2,
-                concat=True,
                 fill_value='mean'
             )
             self.convs.append(GroupAddRev(conv, num_groups=num_groups))
@@ -224,6 +226,10 @@ class RevGATConvEncoder(SerializableModule):
         return self.__heads
 
     @property
+    def concat(self) -> bool:
+        return self.__concat
+
+    @property
     def num_groups(self) -> int:
         return self.__num_groups
 
@@ -255,7 +261,7 @@ class RevGATConvEncoder(SerializableModule):
 
         # Apply conv layers
         for conv in self.convs:
-            x = conv(x, edge_index, edge_attr=edge_attr, dropout_mask=mask)
+            x = conv(x, edge_index, edge_attr, mask)
 
         # Normalize if required
         if self.norm is not None:
@@ -282,6 +288,7 @@ class RevGATConvEncoder(SerializableModule):
             "version": self.__version,
             "edge_dim": self.__edge_dim,
             "heads": self.__heads,
+            "concat": self.__concat,
             "num_groups": self.__num_groups,
             "normalize_hidden": self.__normalize_hidden
         }
@@ -292,6 +299,7 @@ class SimpleGCNEncoder(SerializableModule):
     def __init__(self, in_channels: int, hidden_channels: int, out_channels: int, conv_dims: list[int],
                  dropout: float = 0.0, improved: bool = False, cached: bool = False, add_self_loops: bool = True,
                  normalize: bool = True, bias: bool = True, normalize_hidden: bool = True):
+
         super().__init__()
 
         self.dropout = dropout
@@ -330,6 +338,7 @@ class SimpleGCNEncoder(SerializableModule):
                 normalize=normalize,
                 bias=bias
             )
+            prev_dim = dim
             self.convs.append(conv)
 
     @property
@@ -391,15 +400,16 @@ class SimpleGCNEncoder(SerializableModule):
         if self.lin1 is not None:
             x = self.lin1(x)
 
-        # Generate a dropout mask which will be shared across GNN blocks
-        mask = None
-        if self.training and self.dropout > 0:
-            mask = torch.zeros_like(x).bernoulli_(1 - self.dropout)
-            mask = mask.requires_grad_(False)
-            mask = mask / (1 - self.dropout)
-
         # Apply conv layers
         for conv in self.convs:
+            # Generate a dropout mask
+            mask = None
+            if self.training and self.dropout > 0:
+                mask = torch.zeros_like(x).bernoulli_(1 - self.dropout)
+                mask = mask.requires_grad_(False)
+                mask = mask / (1 - self.dropout)
+
+            # Apply convolution
             x = conv(x, edge_index, edge_weight=edge_weight, dropout_mask=mask)
 
         # Normalize if required
@@ -434,7 +444,7 @@ class SimpleGCNEncoder(SerializableModule):
         return params_dict
 
 
-class GCN2ConvResEncoder(SerializableModule):
+class ResGCN2ConvEncoder(SerializableModule):
     def __init__(self, in_channels: int, hidden_channels: int, out_channels: int, alpha: float, num_convs: int = 1,
                  dropout: float = 0.0, shared_weights: bool = True, cached: bool = False, add_self_loops: bool = True,
                  normalize: bool = True, normalize_hidden: bool = True):
@@ -531,7 +541,7 @@ class GCN2ConvResEncoder(SerializableModule):
         for conv in self.convs:
             conv.reset_parameters()
 
-    def forward(self, x, edge_index, edge_weight):
+    def forward(self, x, edge_index, edge_weight=None):
 
         # Apply first projection if required
         if self.lin1 is not None:

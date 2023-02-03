@@ -3,6 +3,7 @@ from typing import Union, Optional
 import torch
 from torch import Tensor
 from torch.nn import LayerNorm
+from torch_geometric.nn.dense import Linear
 from torch_geometric.nn.conv import SAGEConv, GATv2Conv, GATConv, GCNConv, GCN2Conv
 from torch_geometric.nn.aggr import Aggregation
 from torch_geometric.typing import OptTensor, Adj
@@ -118,7 +119,7 @@ class GATConvBlock(torch.nn.Module):
     def __init__(self, in_channels: Union[int, tuple[int]], out_channels: int, version: str = "v2", heads: int = 1,
                  concat: bool = False, negative_slope: float = 0.2, dropout: float = 0.0, bias: bool = True,
                  add_self_loops: bool = True, edge_dim: Optional[int] = None,
-                 fill_value: Union[float, Tensor, str] = 'mean', **kwargs):
+                 fill_value: Union[float, Tensor, str] = 'mean', project_multi_head: bool = True, **kwargs):
         r"""The graph attentional operator from the `"Graph Attention Networks, paired with a normalization layer."
             <https://arxiv.org/abs/1710.10903>`_ paper
 
@@ -183,6 +184,8 @@ class GATConvBlock(torch.nn.Module):
                     :obj:`"min"`, :obj:`"max"`, :obj:`"mul"`). (default: :obj:`"mean"`)
                 bias (bool, optional): If set to :obj:`False`, the layer will not learn
                     an additive bias. (default: :obj:`True`)
+                project_multi_head (bool, optional): If set to :obj:True`, the output of each head will be concatenated
+                    and projected into an output space corresponding to out_channels.
                 **kwargs (optional): Additional arguments of
                     :class:`torch_geometric.nn.conv.MessagePassing`.
 
@@ -200,8 +203,14 @@ class GATConvBlock(torch.nn.Module):
                   ((2, |\mathcal{E}|), (|\mathcal{E}|, H)))`
                   or :math:`((|\mathcal{V_t}|, H * F_{out}), ((2, |\mathcal{E}|),
                   (|\mathcal{E}|, H)))` if bipartite
+
+                  If :obj:`project_multi_head=True` or obj:`concat=False`, then all the previous shapes:
+                  :math:`((|\mathcal{V}|, H * F_{out})`
+                  will become
+                  :math:`((|\mathcal{V}|, F_{out})`
             """
         super().__init__()
+
         self.norm = LayerNorm(in_channels, elementwise_affine=True)
 
         if version == "v1":
@@ -235,15 +244,29 @@ class GATConvBlock(torch.nn.Module):
         else:
             raise ValueError(f"Unknown version '{version}'")
 
+        # Final projection
+        self.final_linear_projection = None
+        if project_multi_head and heads > 1 and concat:
+            self.final_linear_projection = Linear(heads*out_channels, out_channels)
+
     def reset_parameters(self):
         self.norm.reset_parameters()
         self.conv.reset_parameters()
+        if self.final_linear_projection is not None:
+            self.final_linear_projection.reset_parameters()
 
     def forward(self, x, edge_index, edge_attr=None, dropout_mask=None):
         x = self.norm(x).relu()
         if self.training and dropout_mask is not None:
             x = x * dropout_mask
-        return self.conv(x, edge_index, edge_attr=edge_attr)
+
+        x = self.conv(x, edge_index, edge_attr=edge_attr)
+
+        # Apply final projection to output space if required
+        if self.final_linear_projection is not None:
+            x = self.final_linear_projection(x)
+
+        return x
 
 
 class GCNConvBlock(torch.nn.Module):
