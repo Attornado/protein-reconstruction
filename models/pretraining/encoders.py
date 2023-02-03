@@ -544,9 +544,9 @@ class GCN2ConvResEncoder(SerializableModule):
             mask = mask.requires_grad_(False)
             mask = mask / (1 - self.dropout)
 
-        # Apply conv layers
+        # Apply conv layers with skip connections
         for conv in self.convs:
-            x = conv(x, edge_index, edge_weight=edge_weight, dropout_mask=mask)
+            x = conv(x, x0=x, edge_index=edge_index, edge_weight=edge_weight, dropout_mask=mask)
 
         # Normalize if required
         if self.norm is not None:
