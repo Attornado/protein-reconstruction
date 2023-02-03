@@ -408,8 +408,8 @@ class GCN2ConvBlock(torch.nn.Module):
         self.norm.reset_parameters()
         self.conv.reset_parameters()
 
-    def forward(self, x: Tensor, edge_index: Adj, edge_weight: OptTensor = None, dropout_mask=None):
+    def forward(self, x: Tensor, x0: Tensor, edge_index: Adj, edge_weight: OptTensor = None, dropout_mask=None):
         x = self.norm(x).relu()
         if self.training and dropout_mask is not None:
             x = x * dropout_mask
-        return self.conv(x, edge_index, edge_weight=edge_weight)
+        return self.conv(x, x0, edge_index, edge_weight=edge_weight)
