@@ -11,6 +11,8 @@ ds/*
 config
 config/
 config/*
+prova2.ipynb
+prova.py
 
 ### CVS template
 /CVS/*
@@ -335,7 +337,6 @@ target/
 
 # Jupyter Notebook
 .ipynb_checkpoints
-*.ipynb
 
 # IPython
 profile_default/
@@ -395,3 +396,5 @@ dmypy.json
 # Cython debug symbols
 cython_debug/
 
+!/prova.py
+/prova.py

@@ -1,4 +1,5 @@
 import os
+from abc import ABC, abstractmethod
 from typing import Optional, Type
 import torch
 from torch_geometric.loader import DataLoader
@@ -9,9 +10,28 @@ from models.layers import SerializableModule
 from training.training_tools import FIGURE_SIZE_DEFAULT, MetricsHistoryTracer, EarlyStopping, EARLY_STOP_PATIENCE
 
 
+class GraphDecoder(SerializableModule, ABC):
+
+    def __init__(self, *args, **kwargs):
+        super(GraphDecoder, self).__init__()
+
+    @abstractmethod
+    def forward_all(self, z, sigmoid: bool = True, *args, **kwargs):
+        """
+        Takes the latent space representation z and reconstructs a probabilistic adjacency matrix.
+
+        :param z: the latent space representation of the nodes.
+        :param sigmoid: whether or not to apply a sigmoid function on the final decoder output, normalizing it.
+        :type sigmoid: bool
+
+        :return a probabilistic adjacency matrix for the given input.
+        """
+        raise NotImplementedError("Any GraphDecoder module must implement forward_all() method.")
+
+
 class GAEv2(GAE, SerializableModule):
 
-    def __init__(self, encoder: SerializableModule, decoder: Optional[SerializableModule] = None):
+    def __init__(self, encoder: SerializableModule, decoder: Optional[GraphDecoder] = None):
         """
         GAE sub-class with a simple forward function implemented.
 
@@ -22,10 +42,33 @@ class GAEv2(GAE, SerializableModule):
         """
         super(GAEv2, self).__init__(encoder=encoder, decoder=decoder)
         self.__serialize_decoder = decoder is not None  # True if decoder is not None, False otherwise
+        self.d = decoder
 
     def forward(self, x, edge_index, sigmoid: bool = True, *args, **kwargs):
         z = self.encode(x, edge_index, *args, **kwargs)
-        adj_rec = self.decode(z, sigmoid=sigmoid)
+        adj_rec = self.decode(z, edge_index, sigmoid=sigmoid)
+        return adj_rec
+
+    def forward_all(self, x, edge_index, sigmoid: bool = True, decoder_kwargs: Optional[dict] = None, *args, **kwargs):
+        """
+        Takes the node features and corresponding edges, reconstructing a probabilistic adjacency matrix.
+
+        :return a probabilistic adjacency matrix for the given input.
+        :param x: node feature tensor
+        :param edge_index: edge information.
+        :param sigmoid: whether or not to apply a sigmoid function on the final decoder output, normalizing it.
+        :type sigmoid: bool
+        :param decoder_kwargs: dictionary of keyword arguments for the decoder.
+        :type decoder_kwargs: dict
+
+        :return: a probabilistic adjacency matrix for the given input.
+        """
+        z = self.encode(x, edge_index, *args, **kwargs)
+
+        if decoder_kwargs is not None:
+            adj_rec = self.decoder.forward_all(z, sigmoid=sigmoid, **decoder_kwargs)
+        else:
+            adj_rec = self.decoder.forward_all(z, sigmoid=sigmoid)
         return adj_rec
 
     # noinspection PyTypedDict
@@ -51,7 +94,7 @@ class GAEv2(GAE, SerializableModule):
     # noinspection PyMethodOverriding
     @classmethod
     def from_constructor_params(cls, constructor_params: dict, encoder_constructor: Type[SerializableModule],
-                                decoder_constructor: Optional[Type[SerializableModule]] = None, *args, **kwargs):
+                                decoder_constructor: Optional[Type[GraphDecoder]] = None, *args, **kwargs):
         # Get encoder constructor params/state dict and construct it
         enc_state_dict = constructor_params["encoder"]["state_dict"]
         enc_constructor_params = constructor_params["encoder"]["constructor_params"]

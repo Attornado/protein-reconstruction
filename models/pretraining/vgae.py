@@ -1,41 +1,30 @@
 import os
 from typing import Optional, Any, Type
-import torch
 import copy
+import torch
 from torch.utils.tensorboard import SummaryWriter
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn.models.autoencoder import VGAE
 from torch_geometric.utils import negative_sampling
+from models.pretraining.gae import GraphDecoder
 from models.layers import SerializableModule
 from training.training_tools import MetricsHistoryTracer, EarlyStopping, EARLY_STOP_PATIENCE, FIGURE_SIZE_DEFAULT
 
 
 class VGEncoder(SerializableModule):
-    def __init__(self, encoder: SerializableModule, encoder_mu: Optional[SerializableModule] = None,
-                 encoder_logstd: Optional[SerializableModule] = None):
+    def __init__(self, encoder_mu: SerializableModule, encoder_logstd: Optional[SerializableModule] = None):
         super(VGEncoder, self).__init__()
-        self._encoder = encoder
-        self._encoder_mu = encoder_mu if encoder_mu is not None else copy.deepcopy(encoder)
-        self._encoder_logstd = encoder_logstd if encoder_logstd is not None else copy.deepcopy(encoder)
+        self._encoder_mu = encoder_mu
+        self._encoder_logstd = encoder_logstd if encoder_logstd is not None else copy.deepcopy(encoder_mu)
         self.__encoder_logstd_given = encoder_logstd is not None
-        self.__encoder_mu_given = encoder_mu is not None
 
     def forward(self, x, edge_index, *args, **kwargs):
-        x_enc = self._encoder(x, edge_index, *args, **kwargs)
-        return self._encoder_mu(x_enc, edge_index, *args, **kwargs), \
-            self._enccoder_logstd(x_enc, edge_index, *args, **kwargs)
+        return self._encoder_mu(x, edge_index, *args, **kwargs), self._encoder_logstd(x, edge_index, *args, **kwargs)
 
     # noinspection PyTypedDict
     def serialize_constructor_params(self, *args, **kwargs) -> dict:
         constructor_params = {
-            "encoder_mu_given": self.__encoder_mu_given,
             "encoder_logstd_given": self.__encoder_logstd_given
-        }
-
-        # Encoder params and weights
-        constructor_params["encoder"] = {
-            "state_dict": self._encoder.state_dict(),
-            "constructor_params": self._encoder.serialize_constructor_params()
         }
 
         # Encoder logstd params and weights
@@ -54,39 +43,33 @@ class VGEncoder(SerializableModule):
 
     # noinspection PyMethodOverriding
     @classmethod
-    def from_constructor_params(cls, constructor_params: dict[str, Any], encoder_constructor: Type[SerializableModule],
-                                encoder_mu_constructor: Optional[Type[SerializableModule]] = None,
-                                encoder_logstd_constructor: Optional[Type[SerializableModule]] = None, *args, **kwargs):
+    def from_constructor_params(cls,
+                                constructor_params: dict[str, Any],
+                                encoder_mu_constructor: Type[SerializableModule],
+                                encoder_logstd_constructor: Optional[Type[SerializableModule]] = None,
+                                *args, **kwargs):
 
-        # If encoder_mu and/or encoder_logstd constructors are not given, their class will be the same as the encoder
-        if not constructor_params["encoder_mu_given"]:
-            encoder_mu_constructor = encoder_constructor
+        # If encoder_logstd constructor is not given, its class will be the same as the encoder
         if not constructor_params["encoder_logstd_given"]:
-            encoder_logstd_constructor = encoder_constructor
+            encoder_logstd_constructor = encoder_mu_constructor
 
-        # Get encoder constructor params/state dict and construct it
-        enc_state_dict = constructor_params["encoder"]["state_dict"]
-        enc_constructor_params = constructor_params["encoder"]["constructor_params"]
-        encoder = encoder_constructor.from_constructor_params(enc_constructor_params)  # construct encoder
-        encoder.load_state_dict(state_dict=enc_state_dict)  # set weights
-
-        # Construct mu encoder
+        # Get mu encoder constructor params/state dict and construct it
         enc_mu_state_dict = constructor_params["encoder_mu"]["state_dict"]
         enc_mu_constructor_params = constructor_params["encoder_mu"]["constructor_params"]
         encoder_mu = encoder_mu_constructor.from_constructor_params(enc_mu_constructor_params)
         encoder_mu.load_state_dict(state_dict=enc_mu_state_dict)  # set weights
 
-        # Construct logstd encoder
+        # Get logstd encoder constructor params/state dict and construct it
         enc_logstd_state_dict = constructor_params["encoder_logstd"]["state_dict"]
         enc_logstd_constructor_params = constructor_params["encoder_logstd"]["constructor_params"]
         encoder_logstd = encoder_logstd_constructor.from_constructor_params(enc_logstd_constructor_params)
         encoder_logstd.load_state_dict(state_dict=enc_logstd_state_dict)  # set weights
 
-        return cls(encoder=encoder, encoder_mu=encoder_mu, encoder_logstd=encoder_logstd)
+        return cls(encoder_mu=encoder_mu, encoder_logstd=encoder_logstd)
 
 
 class VGAEv2(VGAE, SerializableModule):
-    def __init__(self, encoder: VGEncoder, decoder: Optional[SerializableModule] = None):
+    def __init__(self, encoder: VGEncoder, decoder: Optional[GraphDecoder] = None):
         """
         VGAE sub-class with a simple forward function implemented.
 
@@ -99,10 +82,33 @@ class VGAEv2(VGAE, SerializableModule):
         self.__serialize_decoder = decoder is not None  # True if decoder is not None, False otherwise
 
     def forward(self, x, edge_index, sigmoid: bool = True, *args, **kwargs):
-        mu, log_std = self.encode(x, edge_index, *args, **kwargs)
+        mu, log_std = self.encoder(x, edge_index, *args, **kwargs)
         z = self.reparametrize(mu=mu, logstd=log_std)
-        adj_rec = self.decode(z, sigmoid=sigmoid)
+        adj_rec = self.decode(z, edge_index, sigmoid=sigmoid)
         return adj_rec, mu, log_std
+
+    def forward_all(self, x, edge_index, sigmoid: bool = True, decoder_kwargs: Optional[dict] = None, *args, **kwargs):
+        """
+        Takes the node features and corresponding edges, reconstructing a probabilistic adjacency matrix.
+
+        :return a probabilistic adjacency matrix for the given input.
+        :param x: node feature tensor
+        :param edge_index: edge information.
+        :param sigmoid: whether or not to apply a sigmoid function on the final decoder output, normalizing it.
+        :type sigmoid: bool
+        :param decoder_kwargs: dictionary of keyword arguments for the decoder.
+        :type decoder_kwargs: dict
+
+        :return: a probabilistic adjacency matrix for the given input.
+        """
+        mu, log_std = self.encoder(x, edge_index, *args, **kwargs)
+        z = self.reparametrize(mu=mu, logstd=log_std)
+
+        if decoder_kwargs is not None:
+            adj_rec = self.decoder.forward_all(z, sigmoid=sigmoid, **decoder_kwargs)
+        else:
+            adj_rec = self.decoder.forward_all(z, sigmoid=sigmoid)
+        return adj_rec
 
     # noinspection PyTypedDict
     def serialize_constructor_params(self, *args, **kwargs) -> dict:
@@ -129,10 +135,9 @@ class VGAEv2(VGAE, SerializableModule):
     def from_constructor_params(cls,
                                 constructor_params: dict,
                                 vgencoder_constructor: Type[VGEncoder],
-                                encoder_constructor: Type[SerializableModule],
-                                encoder_mu_constructor: Optional[Type[SerializableModule]] = None,
+                                encoder_mu_constructor: Type[SerializableModule],
                                 encoder_logstd_constructor: Optional[Type[SerializableModule]] = None,
-                                decoder_constructor: Optional[Type[SerializableModule]] = None,
+                                decoder_constructor: Optional[Type[GraphDecoder]] = None,
                                 *args, **kwargs):
 
         # Get encoder constructor params/state dict and construct it
@@ -140,7 +145,6 @@ class VGAEv2(VGAE, SerializableModule):
         enc_constructor_params = constructor_params["encoder"]["constructor_params"]
         encoder = vgencoder_constructor.from_constructor_params(
             enc_constructor_params,
-            encoder_constructor=encoder_constructor,
             encoder_mu_constructor=encoder_mu_constructor,
             encoder_logstd_constructor=encoder_logstd_constructor
         )  # construct vgencoder
