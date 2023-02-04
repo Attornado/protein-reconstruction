@@ -9,15 +9,18 @@ from torch.utils.data import RandomSampler
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn.models import DeepGraphInfomax
 from models.layers import SerializableModule
+from torch_geometric.nn.pool import global_mean_pool
 from training.training_tools import FIGURE_SIZE_DEFAULT, MetricsHistoryTracer, EarlyStopping, EARLY_STOP_PATIENCE
 
 
 # TODO: implement serialization for DGI
 
 
-def readout_function():
-    # TODO must implement summary_function
-    pass
+def readout_function(encoding: torch.Tensor):
+    # must test this
+    return torch.sigmoid(
+        global_mean_pool(x=encoding, size=1)
+    )
 
 
 def random_sample_corruption(training_set: DataLoader, graph: Data) -> Data:
@@ -70,6 +73,10 @@ class DeepGraphInfomaxWrapper(DeepGraphInfomax, SerializableModule):
     @property
     def hidden_channels(self) -> int:
         return self.__hidden_channels
+
+    @hidden_channels.setter
+    def hidden_channels(self, value):
+        self.__hidden_channels = value
 
     @property
     def normalize_hidden(self) -> bool:
