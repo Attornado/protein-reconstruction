@@ -4,7 +4,6 @@ from typing import Callable, Type
 from torch.nn import LayerNorm
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
-from torch_geometric.data import Data
 from torch.utils.data import RandomSampler
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn.models import DeepGraphInfomax
@@ -16,26 +15,34 @@ from training.training_tools import FIGURE_SIZE_DEFAULT, MetricsHistoryTracer, E
 # TODO: implement serialization for DGI
 
 
-def readout_function(encoding: torch.Tensor):
+def readout_function(encoding: torch.Tensor, x: torch.Tensor, edge_index, batch=None, *args, **kwargs):
+    if batch is None:
+        batch = torch.zeros((encoding.shape[-2])).type(torch.int64)  # assume it's a single batch if not given
+
     # must test this
     return torch.sigmoid(
-        global_mean_pool(x=encoding, size=1)
+        global_mean_pool(x=encoding, batch=batch, size=None)
     )
 
 
-def random_sample_corruption(training_set: DataLoader, graph: Data) -> Data:
+def random_sample_corruption(training_set: DataLoader, x: torch.Tensor, edge_index: torch.Tensor, *args, **kwargs) \
+        -> tuple:
     """
     Takes a DataLoader and returns a single random sample from it.
 
-    :param graph: graph data batch
-    :type graph: Data
+    :param x: graph node-level feature tensor
+    :type x: torch.Tensor
+    :param edge_index: edge index tensor
+    :type edge_index: torch.Tensor
     :param training_set: DataLoader of the graph dataset
     :type training_set: DataLoader
     :return: A single batch sample from the training set.
     """
-    corrupted_graph = graph
+
+    corrupted_edges = edge_index
+    corrupted_graph = None
     # Check adj matrix, should be enough
-    while corrupted_graph.edge_index.equal(graph.edge_index):
+    while corrupted_edges.equal(edge_index):
         train_sample = RandomSampler(
             training_set,
             replacement=False,
@@ -43,10 +50,18 @@ def random_sample_corruption(training_set: DataLoader, graph: Data) -> Data:
             generator=None
         )
         corrupted_graph = next(iter(train_sample))
-    return corrupted_graph
+        corrupted_edges = corrupted_graph.edge_index
+
+    return_tuple = [corrupted_graph.x, corrupted_graph.edge_index]
+
+    for k in kwargs:
+        if k in corrupted_graph:
+            return_tuple.append(corrupted_graph[k])  # add other required graph features
+
+    return tuple(return_tuple)
 
 
-class DeepGraphInfomaxWrapper(DeepGraphInfomax, SerializableModule):
+class DeepGraphInfomaxV2(DeepGraphInfomax, SerializableModule):
     # TODO check readout function inside the init
     def __init__(self,
                  hidden_channels: int,
@@ -59,7 +74,6 @@ class DeepGraphInfomaxWrapper(DeepGraphInfomax, SerializableModule):
         super().__init__(hidden_channels=hidden_channels, encoder=encoder, summary=readout, corruption=corruption)
 
         self._norm = None
-        self.__hidden_channels = hidden_channels
         self.__normalize_hidden = normalize_hidden
         self.__dropout = dropout
 
@@ -71,14 +85,6 @@ class DeepGraphInfomaxWrapper(DeepGraphInfomax, SerializableModule):
         return self.__dropout
 
     @property
-    def hidden_channels(self) -> int:
-        return self.__hidden_channels
-
-    @hidden_channels.setter
-    def hidden_channels(self, value):
-        self.__hidden_channels = value
-
-    @property
     def normalize_hidden(self) -> bool:
         return self.__normalize_hidden
 
@@ -86,7 +92,7 @@ class DeepGraphInfomaxWrapper(DeepGraphInfomax, SerializableModule):
     def serialize_constructor_params(self, *args, **kwargs) -> dict:
 
         constructor_params = {
-            "hidden_channels": self.__hidden_channels,
+            "hidden_channels": self.hidden_channels,
             "dropout": self.__dropout,
             "normalize_hidden": self.__normalize_hidden
         }
@@ -128,12 +134,10 @@ class DeepGraphInfomaxWrapper(DeepGraphInfomax, SerializableModule):
         )
 
     def forward(self, x, edge_index, *args, **kwargs):
-        pos_z, neg_z, summary = super().forward(x, edge_index, *args, **kwargs)
+        pos_z, neg_z, summary = super().forward(x=x, edge_index=edge_index, *args, **kwargs)
 
         if self._norm is not None:
-            summary = self._norm(summary).relu()
-        else:
-            summary = F.relu(summary)
+            summary = self._norm(summary)
 
         # Apply dropout
         if self.__dropout > 0:
@@ -171,7 +175,7 @@ class DeepGraphInfomaxWrapper(DeepGraphInfomax, SerializableModule):
         return precision, recall, acc, f1_score
 
 
-def train_step_DGI(model: DeepGraphInfomaxWrapper, train_data: DataLoader, optimizer, device,
+def train_step_DGI(model: DeepGraphInfomaxV2, train_data: DataLoader, optimizer, device,
                    use_edge_weight: bool = False, use_edge_attr: bool = False):
     # put the model in training mode
     model.train()
@@ -215,7 +219,7 @@ def train_step_DGI(model: DeepGraphInfomaxWrapper, train_data: DataLoader, optim
 
 
 @torch.no_grad()
-def test_step_DGI(model: DeepGraphInfomaxWrapper, val_data: DataLoader, device, use_edge_weight: bool = False,
+def test_step_DGI(model: DeepGraphInfomaxV2, val_data: DataLoader, device, use_edge_weight: bool = False,
                   use_edge_attr: bool = False, threshold: float = 0.5):
     # put the model in evaluation mode
     model.eval()
@@ -257,7 +261,7 @@ def test_step_DGI(model: DeepGraphInfomaxWrapper, val_data: DataLoader, device, 
         float(running_val_loss)
 
 
-def train_DGI(model: DeepGraphInfomaxWrapper, train_data: DataLoader, val_data: DataLoader, epochs: int, optimizer,
+def train_DGI(model: DeepGraphInfomaxV2, train_data: DataLoader, val_data: DataLoader, epochs: int, optimizer,
               experiment_path: str, experiment_name: str, use_edge_weight: bool = False, use_edge_attr: bool = False,
               early_stopping_patience: int = EARLY_STOP_PATIENCE, early_stopping_delta: float = 0,
               threshold: float = 0.5) -> torch.nn.Module:

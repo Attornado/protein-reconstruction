@@ -1,6 +1,6 @@
 from functools import partial
 from models.pretraining.encoders import RevGATConvEncoder
-from models.pretraining.graph_infomax import random_sample_corruption, readout_function,  DeepGraphInfomaxWrapper as DGI
+from models.pretraining.graph_infomax import random_sample_corruption, readout_function, DeepGraphInfomaxV2 as DGI
 
 # TODO get the training set properly
 TRAINING_SET = None
@@ -26,9 +26,7 @@ REV_GAT_ENCODER = RevGATConvEncoder(
 
 def main():
     rev_gat_dgi = DGI(
-        in_channels      = 0,
         hidden_channels  = 0,
-        out_channels     = 0,
         encoder          = REV_GAT_ENCODER,
         normalize_hidden = True,
         readout          = readout_function,
