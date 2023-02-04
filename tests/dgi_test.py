@@ -1,4 +1,5 @@
-from models.pretraining.graph_infomax import DeepGraphInfomaxWrapper as DGI
+import torch
+from models.pretraining.graph_infomax import DeepGraphInfomaxV2 as DGI, readout_function
 from models.pretraining.encoders import RevGATConvEncoder
 import torch_geometric.utils.convert as tgc
 import networkx as nx
@@ -22,14 +23,7 @@ def get_input_graph():
     return pyg
 
 
-# DGI related args
-#     readout
-#     corruption
-#     encoder
-def readout_proxy(encoding):
-    return 0.3141592
-
-def corruption_proxy(graph, *args, **kwargs):
+def corruption_proxy(x: torch.Tensor, edge_index: torch.Tensor, *args, **kwargs):
     g = nx.Graph()
     g.add_node(0, x=[1., 0., 1.1, 1.1, 0.2, 0.1])
     g.add_node(1, x=[0., 1., 0, 1.0, 1.1, 0.2])
@@ -43,7 +37,8 @@ def corruption_proxy(graph, *args, **kwargs):
     g.add_edge(4, 3, edge_weight=1.5)
 
     pyg = tgc.from_networkx(g)
-    return pyg
+    return pyg.x, pyg.edge_index, pyg.edge_weight
+
 
 rev_gat_enc = RevGATConvEncoder(
     in_channels=6,
@@ -59,6 +54,7 @@ rev_gat_enc = RevGATConvEncoder(
     normalize_hidden=True
 )
 
+
 def main():
     # graph
     g = get_input_graph()
@@ -67,14 +63,16 @@ def main():
     dgi = DGI(
         hidden_channels=2,
         encoder=rev_gat_enc,
-        readout=readout_proxy,
+        readout=readout_function,
         corruption=corruption_proxy,
         normalize_hidden=False,
-        dropout=0.5
+        dropout=0.1
     )
 
     # ... the following line raises errors!
-    dgi(x=g.x, edge_index=g.edge_index, edge_attr=g.edge_weight)
+    print(dgi(x=g.x, edge_index=g.edge_index, edge_attr=g.edge_weight))
+
+
 
 
 if __name__ == "__main__":
