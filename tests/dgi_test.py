@@ -69,8 +69,22 @@ def main():
         dropout=0.1
     )
 
-    # ... the following line raises errors!
+    print("launching model's forward...")
+    dgi(x=g.x, edge_index=g.edge_index, edge_attr=g.edge_weight)
+    print("forward runs without errors!")
+
+    print("serializing DGI...")
+    constr_params = dgi.serialize_constructor_params()
+    state_dict = dgi.state_dict()
+    dgi2 = DGI.from_constructor_params(constr_params, RevGATConvEncoder, readout_function, corruption_proxy)
+    dgi2.load_state_dict(state_dict)
+    print("model serialized correctly")
+
+    print("check if models's forward result is the same of the serialized one...")
+    print("\n\nOriginal: ")
     print(dgi(x=g.x, edge_index=g.edge_index, edge_attr=g.edge_weight))
+    print("\n\nDeserialized: ")
+    print(dgi2(x=g.x, edge_index=g.edge_index, edge_attr=g.edge_weight))
 
 
 

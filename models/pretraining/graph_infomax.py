@@ -41,7 +41,6 @@ def random_sample_corruption(training_set: DataLoader, x: torch.Tensor, edge_ind
 
     corrupted_edges = edge_index
     corrupted_graph = None
-    # Check adj matrix, should be enough
     while corrupted_edges.equal(edge_index):
         train_sample = RandomSampler(
             training_set,
