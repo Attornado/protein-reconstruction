@@ -8,9 +8,7 @@ from models.layers import SerializableModule
 from functools import partial
 
 
-# TODO: test this class's serialization functions
-
-class ProtMoveNet(SerializableModule):
+class ProtMotionNet(SerializableModule):
 
     __READOUTS: final = {
         "mean_pool": MeanAggregation(),
@@ -22,8 +20,20 @@ class ProtMoveNet(SerializableModule):
     READOUTS: final = frozenset(__READOUTS.keys())
 
     __ACTIVATIONS: final = {
+        "linear": F.linear,
         "relu": F.relu,
+        "leaky_relu": F.leaky_relu,
+        "rrelu": F.rrelu,
+        "relu6": F.relu6,
         "gelu": F.gelu,
+        "elu": F.elu,
+        "celu": F.celu,
+        "glu": F.glu,
+        "selu": F.selu,
+        "prelu": F.prelu,
+        "silu": F.silu,
+        "hardswish": F.hardswish,
+        "tanh": F.tanh,
         "sigmoid": torch.sigmoid,
         "softmax": partial(F.softmax, dim=-1)
     }
@@ -114,6 +124,7 @@ class ProtMoveNet(SerializableModule):
         encoder_state_dict = constructor_params["encoder"]["state_dict"]
         # TODO: Could not work if from_constructor_params is overridden by encoder class, must fix this to generalize
         encoder = encoder_constructor.from_constructor_params(encoder_constructor_params)
+        encoder.load_state_dict(encoder_state_dict)
         del constructor_params["encoder"]  # delete encoder params from constructor_params
 
         return cls(encoder=encoder, **constructor_params)
