@@ -9,6 +9,7 @@ from torch_geometric.nn.aggr import Aggregation
 from torch_geometric.typing import OptTensor, Adj
 
 
+# TODO: all subclasses of this should be refactored to dynamically use the "eval" func to get the class from string
 class SerializableModule(torch.nn.Module, ABC):
     def __init__(self, *args, **kwargs):
         super(SerializableModule, self).__init__()
@@ -34,7 +35,7 @@ class SerializableModule(torch.nn.Module, ABC):
         return cls(**constructor_params)
 
 
-class SAGEConvBlock(torch.nn.Module):
+class SAGEConvBlock(SerializableModule):
     r"""A block containing a layer normalization and the GraphSAGE operator from the `"Inductive Representation
         Learning on Graphs" <https://arxiv.org/abs/1706.02216>`_ paper
 
@@ -92,6 +93,12 @@ class SAGEConvBlock(torch.nn.Module):
                  aggr: Optional[Union[str, list[str], Aggregation]] = "mean",  root_weight: bool = True, **kwargs):
         super().__init__()
         self.norm = LayerNorm(in_channels, elementwise_affine=True)
+        self.__in_channels = in_channels
+        self.__out_channels = out_channels
+        self.__project = project
+        self.__bias = bias
+        self.__aggr = aggr
+        self.__root_weight = root_weight
         self.conv = SAGEConv(
             in_channels=in_channels,
             out_channels=out_channels,
@@ -113,8 +120,18 @@ class SAGEConvBlock(torch.nn.Module):
             x = x * dropout_mask
         return self.conv(x, edge_index)
 
+    def serialize_constructor_params(self, *args, **kwargs) -> dict:
+        return {
+            "in_channels": self.__in_channels,
+            "out_channels": self.__out_channels,
+            "project": self.__project,
+            "bias": self.__bias,
+            "aggr": self.__aggr,
+            "root_weight": self.__root_weight
+        }
 
-class GATConvBlock(torch.nn.Module):
+
+class GATConvBlock(SerializableModule):
 
     def __init__(self, in_channels: Union[int, tuple[int]], out_channels: int, version: str = "v2", heads: int = 1,
                  concat: bool = False, negative_slope: float = 0.2, dropout: float = 0.0, bias: bool = True,
@@ -210,6 +227,17 @@ class GATConvBlock(torch.nn.Module):
                   :math:`((|\mathcal{V}|, F_{out})`
             """
         super().__init__()
+        self.__in_channels = in_channels
+        self.__out_channels = out_channels
+        self.__version = version
+        self.__heads = heads
+        self.__concat = concat
+        self.__dropout = dropout
+        self.__bias = bias
+        self.__add_self_loops = add_self_loops
+        self.__edge_dim = edge_dim
+        self.__fill_value = fill_value
+        self.__project_multi_head = project_multi_head
 
         self.norm = LayerNorm(in_channels, elementwise_affine=True)
 
@@ -268,8 +296,23 @@ class GATConvBlock(torch.nn.Module):
 
         return x
 
+    def serialize_constructor_params(self, *args, **kwargs) -> dict:
+        return {
+            "in_channels": self.__in_channels,
+            "out_channels": self.__out_channels,
+            "version": self.__version,
+            "heads": self.__heads,
+            "concat": self.__concat,
+            "dropout": self.__dropout,
+            "bias": self.__bias,
+            "add_self_loops": self.__add_self_loops,
+            "edge_dim": self.__edge_dim,
+            "fill_value": self.__fill_value,
+            "project_multi_head": self.__project_multi_head
+        }
 
-class GCNConvBlock(torch.nn.Module):
+
+class GCNConvBlock(SerializableModule):
     def __init__(self, in_channels: int, out_channels: int, improved: bool = False, cached: bool = False,
                  add_self_loops: bool = True, normalize: bool = True, bias: bool = True, **kwargs):
         r"""The graph convolutional operator from the `"Semi-supervised
@@ -329,6 +372,13 @@ class GCNConvBlock(torch.nn.Module):
             """
 
         super().__init__()
+        self.__in_channels = in_channels
+        self.__out_channels = out_channels
+        self.__improved = improved
+        self.__bias = bias
+        self.__cached = cached
+        self.__add_self_loops = add_self_loops
+        self.__normalize = normalize
         self.norm = LayerNorm(in_channels, elementwise_affine=True)
 
         self.conv = GCNConv(
@@ -352,10 +402,22 @@ class GCNConvBlock(torch.nn.Module):
             x = x * dropout_mask
         return self.conv(x, edge_index, edge_weight=edge_weight)
 
+    def serialize_constructor_params(self, *args, **kwargs) -> dict:
+        return {
+            "in_channels": self.__in_channels,
+            "out_channels": self.__out_channels,
+            "bias": self.__bias,
+            "improved": self.__improved,
+            "cached": self.__cached,
+            "add_self_loops": self.__add_self_loops,
+            "normalize": self.__normalize
+        }
 
-class GCN2ConvBlock(torch.nn.Module):
-    def __init__(self, channels: int, alpha: float, theta: float = None, layer: int = None, shared_weights: bool = True,
-                 cached: bool = False, add_self_loops: bool = True, normalize: bool = True, **kwargs):
+
+class GCN2ConvBlock(SerializableModule):
+    def __init__(self, channels: int, alpha: float = 0.5, theta: Optional[float] = 1.0, layer: Optional[int] = 1,
+                 shared_weights: bool = True, cached: bool = False, add_self_loops: bool = True, normalize: bool = True,
+                 **kwargs):
         r"""The graph convolutional operator with initial residual connections and
             identity mapping (GCNII) from the `"Simple and Deep Graph Convolutional
             Networks" <https://arxiv.org/abs/2007.02133>`_ paper, paired with a normalization layer.
@@ -413,6 +475,14 @@ class GCN2ConvBlock(torch.nn.Module):
             """
 
         super().__init__()
+        self.__channels = channels
+        self.__alpha = alpha
+        self.__theta = theta
+        self.__layer = layer
+        self.__shared_weights = shared_weights
+        self.__cached = cached
+        self.__add_self_loops = add_self_loops
+        self.__normalize = normalize
         self.norm = LayerNorm(channels, elementwise_affine=True)
 
         self.conv = GCN2Conv(
@@ -436,3 +506,15 @@ class GCN2ConvBlock(torch.nn.Module):
         if self.training and dropout_mask is not None:
             x = x * dropout_mask
         return self.conv(x, x0, edge_index, edge_weight=edge_weight)
+
+    def serialize_constructor_params(self, *args, **kwargs) -> dict:
+        return {
+            "channels": self.__channels,
+            "alpha": self.__alpha,
+            "theta": self.__theta,
+            "layer": self.__layer,
+            "shared_weights": self.__shared_weights,
+            "cached": self.__cached,
+            "add_self_loops": self.__add_self_loops,
+            "normalize": self.__normalize
+        }
