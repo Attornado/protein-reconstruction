@@ -115,9 +115,9 @@ class RevSAGEConvEncoder(SerializableModule):
 
         # Normalize if required
         if self.norm is not None:
-            x = self.norm(x).relu()
+            x = F.gelu(self.norm(x))
         else:
-            x = F.relu(x)
+            x = F.gelu(x)
 
         # Apply dropout
         x = F.dropout(x, p=self.dropout, training=self.training)
@@ -246,7 +246,7 @@ class RevGATConvEncoder(SerializableModule):
         for conv in self.convs:
             conv.reset_parameters()
 
-    def forward(self, x, edge_index, edge_attr):
+    def forward(self, x, edge_index, edge_attr=None):
 
         # Apply first projection if required
         if self.lin1 is not None:
@@ -265,9 +265,9 @@ class RevGATConvEncoder(SerializableModule):
 
         # Normalize if required
         if self.norm is not None:
-            x = self.norm(x).relu()
+            x = F.gelu(self.norm(x))
         else:
-            x = F.relu(x)
+            x = F.gelu(x)
 
         # Apply dropout
         x = F.dropout(x, p=self.dropout, training=self.training)
@@ -414,9 +414,9 @@ class SimpleGCNEncoder(SerializableModule):
 
         # Normalize if required
         if self.norm is not None:
-            x = self.norm(x).relu()
+            x = F.gelu(self.norm(x))
         else:
-            x = F.relu(x)
+            x = F.gelu(x)
 
         # Apply dropout
         x = F.dropout(x, p=self.dropout, training=self.training)
@@ -560,9 +560,9 @@ class ResGCN2ConvEncoder(SerializableModule):
 
         # Normalize if required
         if self.norm is not None:
-            x = self.norm(x).relu()
+            x = F.gelu(self.norm(x))
         else:
-            x = F.relu(x)
+            x = F.gelu(x)
 
         # Apply dropout
         x = F.dropout(x, p=self.dropout, training=self.training)
@@ -579,6 +579,160 @@ class ResGCN2ConvEncoder(SerializableModule):
             "hidden_channels": self.__hidden_channels,
             "out_channels": self.__out_channels,
             "alpha": self.__alpha,
+            "num_convs": self.__num_convs,
+            "dropout": self.dropout,
+            "shared_weights": self.__shared_weights,
+            "cached": self.__cached,
+            "add_self_loops": self.__add_self_loops,
+            "normalize": self.__normalize,
+            "normalize_hidden": self.__normalize_hidden
+        }
+        return params_dict
+
+
+class ResGCN2ConvEncoderV2(SerializableModule):
+    def __init__(self, in_channels: int, hidden_channels: int, out_channels: int, alpha: float = 0.5,
+                 theta: float = 1.0, num_convs: int = 1, dropout: float = 0.0, shared_weights: bool = True,
+                 cached: bool = False, add_self_loops: bool = True, normalize: bool = True,
+                 normalize_hidden: bool = True):
+        super().__init__()
+
+        self.__in_channels = in_channels
+        self.__hidden_channels = hidden_channels
+        self.__out_channels = out_channels
+        self.__alpha = alpha
+        self.__num_convs = num_convs
+        self.__theta = theta
+        self.dropout = dropout
+        self.__shared_weights = shared_weights
+        self.__cached = cached
+        self.__add_self_loops = add_self_loops
+        self.__normalize = normalize
+        self.__normalize_hidden = normalize_hidden
+        self.lin1 = None
+        self.lin2 = None
+        self.norm = None
+
+        if in_channels != hidden_channels:
+            self.lin1 = Linear(in_channels, hidden_channels)
+
+        if hidden_channels != out_channels:
+            self.lin2 = Linear(hidden_channels, out_channels)
+
+        if normalize_hidden:
+            self.norm = LayerNorm(hidden_channels, elementwise_affine=True)
+
+        self.convs = torch.nn.ModuleList()
+        for layer_index in range(num_convs):
+            conv = GCN2ConvBlock(
+                channels=hidden_channels,
+                alpha=alpha,
+                layer=layer_index + 1,
+                theta=theta,
+                shared_weights=shared_weights,
+                cached=cached,
+                add_self_loops=add_self_loops,
+                normalize=normalize
+            )
+            self.convs.append(conv)
+
+    @property
+    def in_channels(self) -> int:
+        return self.__in_channels
+
+    @property
+    def out_channels(self) -> int:
+        return self.__out_channels
+
+    @property
+    def hidden_channels(self) -> int:
+        return self.__hidden_channels
+
+    @property
+    def normalize_hidden(self) -> bool:
+        return self.__normalize_hidden
+
+    @property
+    def num_convs(self) -> int:
+        return self.__num_convs
+
+    @property
+    def alpha(self) -> float:
+        return self.__alpha
+    
+    @property
+    def theta(self) -> Optional[float]:
+        return self.__theta
+
+    @property
+    def shared_weights(self) -> bool:
+        return self.__shared_weights
+
+    @property
+    def cached(self) -> bool:
+        return self.__cached
+
+    @property
+    def add_self_loops(self) -> bool:
+        return self.__add_self_loops
+
+    @property
+    def normalize(self) -> bool:
+        return self.__normalize
+
+    def reset_parameters(self):
+        if self.lin1 is not None:
+            self.lin1.reset_parameters()
+
+        if self.lin2 is not None:
+            self.lin2.reset_parameters()
+
+        if self.norm is not None:
+            self.norm.reset_parameters()
+
+        for conv in self.convs:
+            conv.reset_parameters()
+
+    def forward(self, x, edge_index, edge_weight=None):
+
+        # Apply first projection if required
+        if self.lin1 is not None:
+            x = self.lin1(x)
+
+        # Generate a dropout mask which will be shared across GNN blocks
+        mask = None
+        if self.training and self.dropout > 0:
+            mask = torch.zeros_like(x).bernoulli_(1 - self.dropout)
+            mask = mask.requires_grad_(False)
+            mask = mask / (1 - self.dropout)
+
+        # Apply conv layers with skip connections, storing initial representation x0
+        x0 = x
+        for conv in self.convs:
+            x = conv(x, x0=x0, edge_index=edge_index, edge_weight=edge_weight, dropout_mask=mask)
+
+        # Normalize if required
+        if self.norm is not None:
+            x = F.gelu(self.norm(x))
+        else:
+            x = F.gelu(x)
+
+        # Apply dropout
+        x = F.dropout(x, p=self.dropout, training=self.training)
+
+        # Apply second projection if required
+        if self.lin2 is not None:
+            x = self.lin2(x)
+
+        return x
+
+    def serialize_constructor_params(self, *args, **kwargs) -> dict:
+        params_dict = {
+            "in_channels": self.__in_channels,
+            "hidden_channels": self.__hidden_channels,
+            "out_channels": self.__out_channels,
+            "alpha": self.__alpha,
+            "theta": self.__theta,
             "num_convs": self.__num_convs,
             "dropout": self.dropout,
             "shared_weights": self.__shared_weights,

@@ -1,30 +1,46 @@
 import os
 from typing import Optional, Any, Type
-import copy
 import torch
 from torch.utils.tensorboard import SummaryWriter
 from torch_geometric.loader import DataLoader
+from torch_geometric.nn.inits import reset
 from torch_geometric.nn.models.autoencoder import VGAE
 from torch_geometric.utils import negative_sampling
 from models.pretraining.gae import GraphDecoder
 from models.layers import SerializableModule
 from training.training_tools import MetricsHistoryTracer, EarlyStopping, EARLY_STOP_PATIENCE, FIGURE_SIZE_DEFAULT
+# import copy
 
 
 class VGEncoder(SerializableModule):
-    def __init__(self, encoder_mu: SerializableModule, encoder_logstd: Optional[SerializableModule] = None):
+    def __init__(self, encoder_mu: SerializableModule, encoder_logstd: Optional[SerializableModule] = None,
+                 shared_encoder: Optional[SerializableModule] = None):
         super(VGEncoder, self).__init__()
         self._encoder_mu = encoder_mu
-        self._encoder_logstd = encoder_logstd if encoder_logstd is not None else copy.deepcopy(encoder_mu)
-        self.__encoder_logstd_given = encoder_logstd is not None
+
+        self._shared_encoder = shared_encoder
+        self.__shared_encoder_given = shared_encoder is not None
+
+        # If no encoder_logstd is given, deep copy the encoder_mu
+        self.__encoder_logstd_given = True
+        if encoder_logstd is None:
+            self.__encoder_logstd_given = False
+            encoder_logstd = type(encoder_mu).from_constructor_params(encoder_mu.serialize_constructor_params())
+
+        self._encoder_logstd = encoder_logstd
 
     def forward(self, x, edge_index, *args, **kwargs):
+
+        # If a shared encoder is given, apply it before encoder the mu and log(std) ones
+        if self._shared_encoder is not None:
+            x = self._shared_encoder(x, edge_index, *args, **kwargs)
         return self._encoder_mu(x, edge_index, *args, **kwargs), self._encoder_logstd(x, edge_index, *args, **kwargs)
 
     # noinspection PyTypedDict
     def serialize_constructor_params(self, *args, **kwargs) -> dict:
         constructor_params = {
-            "encoder_logstd_given": self.__encoder_logstd_given
+            "encoder_logstd_given": self.__encoder_logstd_given,
+            "shared_encoder_given": self.__shared_encoder_given
         }
 
         # Encoder logstd params and weights
@@ -39,7 +55,21 @@ class VGEncoder(SerializableModule):
             "constructor_params": self._encoder_mu.serialize_constructor_params()
         }
 
+        # Shared encoder params
+        if self.__shared_encoder_given:
+            constructor_params["shared_encoder"] = {
+                "state_dict": self._shared_encoder.state_dict(),
+                "constructor_params": self._shared_encoder.serialize_constructor_params()
+            }
+
         return constructor_params
+
+    def reset_parameters(self):
+        reset(self._encoder_mu)
+        if self._encoder_logstd is not None:
+            reset(self._encoder_logstd)
+        if self._shared_encoder is not None:
+            reset(self._shared_encoder)
 
     # noinspection PyMethodOverriding
     @classmethod
@@ -47,9 +77,10 @@ class VGEncoder(SerializableModule):
                                 constructor_params: dict[str, Any],
                                 encoder_mu_constructor: Type[SerializableModule],
                                 encoder_logstd_constructor: Optional[Type[SerializableModule]] = None,
+                                shared_encoder_constructor: Optional[Type[SerializableModule]] = None,
                                 *args, **kwargs):
 
-        # If encoder_logstd constructor is not given, its class will be the same as the encoder
+        # If encoder_logstd constructor is not given, its class will be the same as encoder_mu
         if not constructor_params["encoder_logstd_given"]:
             encoder_logstd_constructor = encoder_mu_constructor
 
@@ -65,7 +96,15 @@ class VGEncoder(SerializableModule):
         encoder_logstd = encoder_logstd_constructor.from_constructor_params(enc_logstd_constructor_params)
         encoder_logstd.load_state_dict(state_dict=enc_logstd_state_dict)  # set weights
 
-        return cls(encoder_mu=encoder_mu, encoder_logstd=encoder_logstd)
+        # Get shared encoder parameters/state dict and construct it if required
+        shared_encoder = None
+        if constructor_params["shared_encoder_given"]:
+            shared_enc_state_dict = constructor_params["shared_encoder"]["state_dict"]
+            shared_enc_constructor_params = constructor_params["shared_encoder"]["constructor_params"]
+            shared_encoder = shared_encoder_constructor.from_constructor_params(shared_enc_constructor_params)
+            shared_encoder.load_state_dict(state_dict=shared_enc_state_dict)  # set weights
+
+        return cls(encoder_mu=encoder_mu, encoder_logstd=encoder_logstd, shared_encoder=shared_encoder)
 
 
 class VGAEv2(VGAE, SerializableModule):
@@ -82,6 +121,7 @@ class VGAEv2(VGAE, SerializableModule):
         self.__serialize_decoder = decoder is not None  # True if decoder is not None, False otherwise
 
     def forward(self, x, edge_index, sigmoid: bool = True, *args, **kwargs):
+
         mu, log_std = self.encoder(x, edge_index, *args, **kwargs)
         z = self.reparametrize(mu=mu, logstd=log_std)
         adj_rec = self.decode(z, edge_index, sigmoid=sigmoid)
@@ -94,7 +134,7 @@ class VGAEv2(VGAE, SerializableModule):
         :return a probabilistic adjacency matrix for the given input.
         :param x: node feature tensor
         :param edge_index: edge information.
-        :param sigmoid: whether or not to apply a sigmoid function on the final decoder output, normalizing it.
+        :param sigmoid: whether to apply a sigmoid function on the final decoder output, normalizing it.
         :type sigmoid: bool
         :param decoder_kwargs: dictionary of keyword arguments for the decoder.
         :type decoder_kwargs: dict
@@ -137,6 +177,7 @@ class VGAEv2(VGAE, SerializableModule):
                                 vgencoder_constructor: Type[VGEncoder],
                                 encoder_mu_constructor: Type[SerializableModule],
                                 encoder_logstd_constructor: Optional[Type[SerializableModule]] = None,
+                                shared_encoder_constructor: Optional[Type[SerializableModule]] = None,
                                 decoder_constructor: Optional[Type[GraphDecoder]] = None,
                                 *args, **kwargs):
 
@@ -146,7 +187,8 @@ class VGAEv2(VGAE, SerializableModule):
         encoder = vgencoder_constructor.from_constructor_params(
             enc_constructor_params,
             encoder_mu_constructor=encoder_mu_constructor,
-            encoder_logstd_constructor=encoder_logstd_constructor
+            encoder_logstd_constructor=encoder_logstd_constructor,
+            shared_encoder_constructor=shared_encoder_constructor
         )  # construct vgencoder
         encoder.load_state_dict(state_dict=enc_state_dict)  # set weights
 
@@ -192,6 +234,7 @@ def train_step_vgae(model: VGAEv2, train_data: DataLoader, optimizer, device, us
         # Update running average loss
         running_loss = running_loss + 1 / steps * (loss.item() - running_loss)
         steps += 1
+        print(f"Steps: {steps}/{len(train_data)}, running loss {running_loss}")
 
     return float(running_loss)
 
@@ -238,13 +281,16 @@ def test_step_vgae(model: VGAEv2, val_data: DataLoader, device, use_edge_weight:
 
 def train_vgae(model: VGAEv2, train_data: DataLoader, val_data: DataLoader, epochs: int, optimizer,
                experiment_path: str, experiment_name: str, use_edge_weight: bool = False, use_edge_attr: bool = False,
-               early_stopping_patience: int = EARLY_STOP_PATIENCE, early_stopping_delta: float = 0) -> torch.nn.Module:
+               early_stopping_patience: int = EARLY_STOP_PATIENCE, early_stopping_delta: float = 0) -> VGAEv2:
     # Move model to device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
 
+    experiment_path = os.path.join(experiment_path, experiment_name)
+    os.makedirs(experiment_path, exist_ok=True)  # create experiment directory if it doesn't exist
+
     # Instantiate the summary writer
-    writer = SummaryWriter(f'{experiment_path}_{experiment_name}_{epochs}_epochs')
+    writer = SummaryWriter(f'{experiment_path}_{epochs}_epochs')
 
     # Early-stopping monitor
     checkpoint_path = os.path.join(f"{experiment_path}", "checkpoint.pt")
@@ -282,7 +328,7 @@ def train_vgae(model: VGAEv2, train_data: DataLoader, val_data: DataLoader, epoc
         )
 
         print('Epoch: {:d}, Train loss: {:.4f}, Validation loss {:.4f}, '
-              'AUC: {:.4f}, Average precision: {:.4f}'.format(epoch, train_loss, val_loss, auc, avg_precision))
+              'AUC: {:.4f}, Average precision: {:.4f}'.format(epoch + 1, train_loss, val_loss, auc, avg_precision))
 
         # Tensorboard state update
         writer.add_scalar('train_loss', train_loss, epoch)
