@@ -2,7 +2,6 @@ import os
 from typing import final
 import torch
 from torch_geometric.loader import DataLoader
-
 from models.layers import GATConvBlock
 from preprocessing.constants import PRETRAIN_CLEANED_TRAIN, PRETRAIN_CLEANED_VAL, PRETRAIN_CLEANED_TEST, DATA_PATH
 from models.pretraining.vgae import VGAEv2, train_vgae, VGEncoder
@@ -14,12 +13,11 @@ from training.training_tools import EARLY_STOP_PATIENCE
 
 
 BATCH_SIZE: final = 500
-EPOCHS: final = 100
-EXPERIMENT_NAME: final = 'vgae_gat_test4'
+EPOCHS: final = 200
+EXPERIMENT_NAME: final = 'vgae_gat_test5'
 EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "pretraining", "vgae")
 
 
-# TODO; finish this
 def main():
     ds_train = load_dataset(PRETRAIN_CLEANED_TRAIN, dataset_type="pretrain")
     ds_val = load_dataset(PRETRAIN_CLEANED_VAL, dataset_type="pretrain")
