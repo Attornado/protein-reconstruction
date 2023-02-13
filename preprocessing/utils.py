@@ -3,8 +3,8 @@ import json
 import os
 from typing import Union, List
 import pandas as pd
-from preprocessing.constants import UNIPROTS_KEY, PDBS_KEY, USED_COLUMNS, RANDOM_SEED, TEST_SIZE_PSCDB, VAL_SIZE_PSCDB, \
-    PDB, PATHS_KEY
+from preprocessing.constants import UNIPROTS_KEY, PDBS_KEY, USED_COLUMNS, RANDOM_SEED, TEST_SIZE_PSCDB, \
+    VAL_SIZE_PSCDB, PDB, PATHS_KEY
 from sklearn.model_selection import train_test_split
 
 

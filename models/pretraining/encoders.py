@@ -295,6 +295,151 @@ class RevGATConvEncoder(SerializableModule):
         return params_dict
 
 
+class RevGCNEncoder(SerializableModule):
+    def __init__(self, in_channels: int, hidden_channels: int, out_channels: int, num_convs: int = 1,
+                 dropout: float = 0.0, improved: bool = False, cached: bool = False, add_self_loops: bool = True,
+                 normalize: bool = True, bias: bool = True, num_groups: int = 2, normalize_hidden: bool = True):
+        super().__init__()
+
+        self.dropout = dropout
+        self.__in_channels = in_channels
+        self.__hidden_channels = hidden_channels
+        self.__out_channels = out_channels
+        self.__normalize_hidden = normalize_hidden
+        self.__num_convs = num_convs
+        self.__improved = improved
+        self.__cached = cached
+        self.__add_self_loops = add_self_loops
+        self.__normalize = normalize
+        self.__bias = bias
+        self.__num_groups = num_groups
+        self.lin1 = None
+        self.lin2 = None
+        self.norm = None
+
+        if in_channels != hidden_channels:
+            self.lin1 = Linear(in_channels, hidden_channels)
+
+        if hidden_channels != out_channels:
+            self.lin2 = Linear(hidden_channels, out_channels)
+
+        if normalize_hidden:
+            self.norm = LayerNorm(hidden_channels, elementwise_affine=True)
+
+        if hidden_channels % num_groups != 0:
+            raise ValueError(
+                f"hidden_channels must be divisible by num_groups, given {hidden_channels} and {num_groups}"
+            )
+
+        self.convs = torch.nn.ModuleList()
+        for _ in range(num_convs):
+            conv = GCNConvBlock(
+                in_channels=hidden_channels // num_groups,
+                out_channels=hidden_channels // num_groups,
+                improved=improved,
+                cached=cached,
+                add_self_loops=add_self_loops,
+                normalize=normalize,
+                bias=bias
+            )
+            self.convs.append(GroupAddRev(conv, num_groups=num_groups))
+
+    @property
+    def in_channels(self) -> int:
+        return self.__in_channels
+
+    @property
+    def out_channels(self) -> int:
+        return self.__out_channels
+
+    @property
+    def hidden_channels(self) -> int:
+        return self.__hidden_channels
+
+    @property
+    def normalize_hidden(self) -> bool:
+        return self.__normalize_hidden
+
+    @property
+    def project(self) -> bool:
+        return self.__project
+
+    @property
+    def root_weight(self) -> bool:
+        return self.__root_weight
+
+    @property
+    def aggr(self) -> Union[str, list[str]]:
+        return self.__aggr
+
+    @property
+    def num_groups(self) -> int:
+        return self.__num_groups
+
+    def reset_parameters(self):
+        if self.lin1 is not None:
+            self.lin1.reset_parameters()
+
+        if self.lin2 is not None:
+            self.lin2.reset_parameters()
+
+        if self.norm is not None:
+            self.norm.reset_parameters()
+
+        for conv in self.convs:
+            conv.reset_parameters()
+
+    def forward(self, x, edge_index, edge_weight=None):
+
+        # Apply first projection if required
+        if self.lin1 is not None:
+            x = self.lin1(x)
+
+        # Generate a dropout mask which will be shared across GNN blocks
+        mask = None
+        if self.training and self.dropout > 0:
+            mask = torch.zeros_like(x).bernoulli_(1 - self.dropout)
+            mask = mask.requires_grad_(False)
+            mask = mask / (1 - self.dropout)
+
+        # Apply conv layers
+        for conv in self.convs:
+            x = conv(x, edge_index, edge_weight, mask)
+
+        # Normalize if required
+        if self.norm is not None:
+            x = F.gelu(self.norm(x))
+        else:
+            x = F.gelu(x)
+
+        # Apply dropout
+        x = F.dropout(x, p=self.dropout, training=self.training)
+
+        # Apply second projection if required
+        if self.lin2 is not None:
+            x = self.lin2(x)
+
+        return x
+
+    def serialize_constructor_params(self, *args, **kwargs) -> dict:
+        params_dict = {
+            "in_channels": self.__in_channels,
+            "hidden_channels": self.__hidden_channels,
+            "out_channels": self.__out_channels,
+            "num_convs": self.__num_convs,
+            "dropout": self.dropout,
+            "improved": self.__improved,
+            "cached": self.__cached,
+            "add_self_loops": self.__add_self_loops,
+            "normalize": self.__normalize,
+            "bias": self.__bias,
+            "num_groups": self.__num_groups,
+            "normalize_hidden": self.__normalize_hidden
+        }
+
+        return params_dict
+
+
 class SimpleGCNEncoder(SerializableModule):
     def __init__(self, in_channels: int, hidden_channels: int, out_channels: int, conv_dims: list[int],
                  dropout: float = 0.0, improved: bool = False, cached: bool = False, add_self_loops: bool = True,
