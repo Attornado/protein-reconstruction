@@ -1,42 +1,146 @@
+import os
 from functools import partial
-from models.pretraining.encoders import RevGATConvEncoder
-from models.pretraining.graph_infomax import random_sample_corruption, readout_function, DeepGraphInfomaxV2 as DGI
+from typing import final
+import torch
+from torch.optim import Adam, Adadelta
+from torch_geometric.loader import DataLoader
+from torchinfo import torchinfo
+from models.layers import GCNConvBlock
+from models.pretraining.encoders import RevGATConvEncoder, RevGCNEncoder
+from models.pretraining.graph_infomax import readout_function, DeepGraphInfomaxV2 as DGI, \
+    train_DGI, RandomSampleCorruption
+from preprocessing.constants import PRETRAIN_CLEANED_TRAIN, PRETRAIN_CLEANED_VAL, DATA_PATH
+from preprocessing.dataset import load_dataset
 
-# TODO get the training set properly
-TRAINING_SET = None
 
-CORRUPTION_FUNC = partial(
-    random_sample_corruption,
-    TRAINING_SET
-)
-
-REV_GAT_ENCODER = RevGATConvEncoder(
-    in_channels      = 0,
-    hidden_channels  = 0,
-    out_channels     = 0,
-    num_convs        = 1,
-    dropout          = 0.0,
-    project          = False,
-    root_weight      = True,
-    aggr             = "mean",
-    num_groups       = 2,
-    normalize_hidden = True
-)
+BATCH_SIZE: final = 500
+EPOCHS: final = 250
+EXPERIMENT_NAME: final = 'dgi_rev_gcn_test1'
+EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "pretraining", "dgi")
 
 
 def main():
-    rev_gat_dgi = DGI(
-        hidden_channels  = 0,
-        encoder          = REV_GAT_ENCODER,
-        normalize_hidden = True,
-        readout          = readout_function,
-        corruption       = CORRUPTION_FUNC,
-        dropout          = 0.0
+    ds_train = load_dataset(PRETRAIN_CLEANED_TRAIN, dataset_type="pretrain")
+    ds_val = load_dataset(PRETRAIN_CLEANED_VAL, dataset_type="pretrain")
+    # ds_test = load_dataset(PRETRAIN_CLEANED_TEST, dataset_type="pretrain")
+
+    dl_train = DataLoader(ds_train, batch_size=BATCH_SIZE, shuffle=True)
+    dl_val = DataLoader(ds_val, batch_size=BATCH_SIZE, shuffle=True)
+    # dl_test = DataLoader(ds_test, batch_size=BATCH_SIZE, shuffle=True)
+
+    in_channels = 10
+
+    """
+    encoder = ResGCN2ConvEncoder(
+        in_channels=in_channels,
+        hidden_channels=10,
+        out_channels=10,
+        num_convs=5,
+        dropout=0.0,
+        alpha=0.4
     )
+
+    encoder = SimpleGCNEncoder(
+        in_channels=in_channels,
+        hidden_channels=10,
+        out_channels=10,
+        conv_dims=[10, 10, 10, 10],
+        dropout=0.0
+    )
+    
+     encoder = RevSAGEConvEncoder(
+        in_channels=in_channels,
+        hidden_channels=40,
+        out_channels=40,
+        num_convs=60,
+        dropout=0.0,
+        project=False,
+        root_weight=True,
+        aggr="mean",
+        num_groups=10,
+        normalize_hidden=True
+    )
+
+    encoder_mu = SAGEConvBlock(
+        in_channels=40,
+        out_channels=40,
+        project=False,
+        root_weight=True,
+        aggr="mean"
+    )
+    
+     encoder = RevSAGEConvEncoder(
+        in_channels=in_channels,
+        hidden_channels=10,
+        out_channels=10,
+        num_convs=20,
+        dropout=0.0,
+        num_groups=2
+    )   
+    
+    encoder = RevGATConvEncoder(
+        in_channels=in_channels,
+        hidden_channels=30,
+        out_channels=30,
+        num_convs=50,
+        dropout=0.0,
+        heads=4,
+        concat=False,
+        num_groups=10
+    )
+    
+    encoder_mu = GATConvBlock(
+        in_channels=30,
+        out_channels=30,
+        heads=4
+    )
+    """
+
+    encoder = RevGCNEncoder(
+        in_channels=in_channels,
+        hidden_channels=50,
+        out_channels=50,
+        num_convs=100,
+        improved=True,
+        dropout=0.0,
+        num_groups=10,
+        normalize_hidden=True
+    )
+
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    corruption = RandomSampleCorruption(train_data=ds_train, val_data=ds_val, device=device)
+    dgi = DGI(
+        hidden_channels=50,
+        encoder=encoder,
+        normalize_hidden=True,
+        readout=readout_function,
+        corruption=corruption,
+        dropout=0.0
+    )
+
+    print(dgi)
+    print(torchinfo.summary(dgi))
+
+    #optimizer = Adam(dgi.parameters(), lr=0.01)
+    optimizer = Adadelta(dgi.parameters())
+    model = train_DGI(
+        dgi,
+        train_data=dl_train,
+        val_data=dl_val,
+        epochs=EPOCHS,
+        optimizer=optimizer,
+        experiment_path=EXPERIMENT_PATH,
+        experiment_name=EXPERIMENT_NAME,
+        early_stopping_patience=30
+    )
+
+    full_experiment_path = os.path.join(EXPERIMENT_PATH, EXPERIMENT_NAME)
+    constructor_params = model.serialize_constructor_params()
+    state_dict = model.state_dict()
+    torch.save(state_dict, os.path.join(full_experiment_path, "state_dict.pt"))
+    torch.save(constructor_params, os.path.join(full_experiment_path, "constructor_params.pt"))
+    print(f"Model trained and stored to {full_experiment_path}.")
 
 
 if __name__ == "__main__":
     main()
-
-
-

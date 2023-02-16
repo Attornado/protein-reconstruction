@@ -5,6 +5,7 @@ from torch.nn import LayerNorm
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import RandomSampler
+from torch_geometric.data import Dataset
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn.models import DeepGraphInfomax
 from models.layers import SerializableModule
@@ -16,8 +17,10 @@ from training.training_tools import FIGURE_SIZE_DEFAULT, MetricsHistoryTracer, E
 
 
 def readout_function(encoding: torch.Tensor, x: torch.Tensor, edge_index, batch=None, *args, **kwargs):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     if batch is None:
-        batch = torch.zeros((encoding.shape[-2])).type(torch.int64)  # assume it's a single batch if not given
+        # assume it's a single batch if not given
+        batch = torch.zeros((encoding.shape[-2])).type(torch.int64).to(device)
 
     # must test this
     return torch.sigmoid(
@@ -25,7 +28,66 @@ def readout_function(encoding: torch.Tensor, x: torch.Tensor, edge_index, batch=
     )
 
 
-def random_sample_corruption(training_set: DataLoader, x: torch.Tensor, edge_index: torch.Tensor, *args, **kwargs) \
+class RandomSampleCorruption(object):
+    def __init__(self, train_data: Dataset, val_data: Dataset, device):
+        self.__train_data = train_data
+        self.__val_data = val_data
+        self.__device = device
+        self.__training = True
+
+    def __call__(self, x: torch.Tensor, edge_index: torch.Tensor, *args, **kwargs):
+        # TODO: fix this, it can take the same graph as the negatve sample
+        corrupted_edges = edge_index
+        corrupted_graph = None
+        while corrupted_edges.equal(edge_index):
+            dataset = self.__train_data if self.__training else self.__val_data
+            sample = RandomSampler(
+                dataset,
+                replacement=False,
+                num_samples=1,
+                generator=None
+            )
+            corrupted_graph_index = next(iter(sample))
+            corrupted_graph = self.__train_data[corrupted_graph_index]
+            corrupted_graph.to(self.__device)
+            corrupted_edges = corrupted_graph.edge_index
+
+        return_tuple = [corrupted_graph.x, corrupted_graph.edge_index]
+
+        for k in kwargs:
+            if k in corrupted_graph:
+                return_tuple.append(corrupted_graph[k])  # add other required graph features
+
+        return tuple(return_tuple)
+
+    @property
+    def training(self) -> bool:
+        return self.__training
+
+    @training.setter
+    def training(self, train: bool):
+        self.__training = train
+
+    @property
+    def device(self):
+        return self.__device
+
+    @device.setter
+    def device(self, device):
+        self.__device = device
+
+    def to(self, device):
+        self.device = device
+
+    def eval(self):
+        self.training = False
+
+    def train(self):
+        self.training = True
+
+
+'''
+def random_sample_corruption(x: torch.Tensor, edge_index: torch.Tensor, training_set: DataLoader, *args, **kwargs) \
         -> tuple:
     """
     Takes a DataLoader and returns a single random sample from it.
@@ -58,6 +120,7 @@ def random_sample_corruption(training_set: DataLoader, x: torch.Tensor, edge_ind
             return_tuple.append(corrupted_graph[k])  # add other required graph features
 
     return tuple(return_tuple)
+'''
 
 
 class DeepGraphInfomaxV2(DeepGraphInfomax, SerializableModule):
@@ -103,6 +166,16 @@ class DeepGraphInfomaxV2(DeepGraphInfomax, SerializableModule):
         }
 
         return constructor_params
+
+    def train(self, mode: bool = True):
+        super().train(mode)
+        if isinstance(self.corruption, RandomSampleCorruption):
+            self.corruption.train()
+
+    def eval(self):
+        super().eval()
+        if isinstance(self.corruption, RandomSampleCorruption):
+            self.corruption.eval()
 
     # noinspection PyMethodOverriding
     @classmethod
@@ -214,6 +287,8 @@ def train_step_DGI(model: DeepGraphInfomaxV2, train_data: DataLoader, optimizer,
         # Update running average loss
         running_loss = running_loss + 1 / steps * (loss.item() - running_loss)
         steps += 1
+        print(f"Steps: {steps}/{len(train_data)}, running loss {running_loss}")
+
     return float(running_loss)
 
 
@@ -268,6 +343,9 @@ def train_DGI(model: DeepGraphInfomaxV2, train_data: DataLoader, val_data: DataL
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
 
+    experiment_path = os.path.join(experiment_path, experiment_name)
+    os.makedirs(experiment_path, exist_ok=True)  # create experiment directory if it doesn't exist
+
     # Instantiate the summary writer
     writer = SummaryWriter(f'{experiment_path}_{experiment_name}_{epochs}_epochs')
 
@@ -287,7 +365,8 @@ def train_DGI(model: DeepGraphInfomaxV2, train_data: DataLoader, val_data: DataL
             "avg_recall",
             "avg_accuracy",
             "avg_f1",
-            "avg_val_loss",
+            "val_loss",
+            "train_loss"
         ],
         name="DGI training metrics"
     )
@@ -314,14 +393,15 @@ def train_DGI(model: DeepGraphInfomaxV2, train_data: DataLoader, val_data: DataL
         )
 
         print(
-            'Epoch: {:d}, Train loss: {:.4f}, Validation loss {:.4f}, ' 'Average: {:.4f}, Average precision: {:.4f}'
+            'Epoch: {:d}, Train loss: {:.4f}, Validation loss {:.4f}, '
+            'Average accuracy: {:.4f}, Average precision: {:.4f}, Average recall: {:.4f}, Average F1: {:.4f}, '
             .format(
                 epoch,
                 train_loss,
                 val_loss,
+                avg_accuracy,
                 avg_precision,
                 avg_recall,
-                avg_accuracy,
                 avg_f1
             )
         )
@@ -366,7 +446,7 @@ def train_DGI(model: DeepGraphInfomaxV2, train_data: DataLoader, val_data: DataL
             "avg_f1",
         ],
         figsize=FIGURE_SIZE_DEFAULT,
-        traced_min_metric='avg_f1',
+        traced_max_metric='avg_f1',
         store_path=os.path.join(f"{experiment_path}", "prec_rec_f1.svg")
     )
 
@@ -375,7 +455,7 @@ def train_DGI(model: DeepGraphInfomaxV2, train_data: DataLoader, val_data: DataL
             'avg_accuracy',
         ],
         figsize=FIGURE_SIZE_DEFAULT,
-        traced_min_metric='avg_accuracy',
+        traced_max_metric='avg_accuracy',
         store_path=os.path.join(f"{experiment_path}", "avg_accuracy.svg")
     )
 
