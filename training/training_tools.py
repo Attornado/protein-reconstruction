@@ -160,7 +160,7 @@ class MetricsHistoryTracer(object):
                     min_position = np.argmin(metric_history) + 1
                     plt.axvline(min_position, linestyle='--', color='r', label=f'{metric} minimum')
 
-            if metric == traced_min_metric:
+            if metric == traced_max_metric:
                 # Find position of the highest metric point
                 max_position = np.argmax(metric_history) + 1
                 plt.axvline(max_position, linestyle='--', color='r', label=f'{metric} maximum')
