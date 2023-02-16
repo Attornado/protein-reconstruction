@@ -4,16 +4,13 @@ from typing import Callable, Type
 from torch.nn import LayerNorm
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
-from torch.utils.data import RandomSampler
-from torch_geometric.data import Dataset
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn.models import DeepGraphInfomax
 from models.layers import SerializableModule
 from torch_geometric.nn.pool import global_mean_pool
 from training.training_tools import FIGURE_SIZE_DEFAULT, MetricsHistoryTracer, EarlyStopping, EARLY_STOP_PATIENCE
-
-
-# TODO: implement serialization for DGI
+# from torch.utils.data import RandomSampler
+# from torch_geometric.data import Dataset
 
 
 def readout_function(encoding: torch.Tensor, x: torch.Tensor, edge_index, batch=None, *args, **kwargs):
@@ -29,17 +26,22 @@ def readout_function(encoding: torch.Tensor, x: torch.Tensor, edge_index, batch=
 
 
 class RandomSampleCorruption(object):
-    def __init__(self, train_data: Dataset, val_data: Dataset, device):
+    def __init__(self, train_data: DataLoader, val_data: DataLoader, device):
         self.__train_data = train_data
         self.__val_data = val_data
+        self.__iter_train_data = iter(train_data)
+        self.__iter_val_data = iter(val_data)
         self.__device = device
         self.__training = True
 
     def __call__(self, x: torch.Tensor, edge_index: torch.Tensor, *args, **kwargs):
-        # TODO: fix this, it can take the same graph as the negatve sample
+        # TODO: test this
+        # Loop until we don't find a different batch of graphs comparing the edges
         corrupted_edges = edge_index
         corrupted_graph = None
         while corrupted_edges.equal(edge_index):
+
+            """
             dataset = self.__train_data if self.__training else self.__val_data
             sample = RandomSampler(
                 dataset,
@@ -49,6 +51,24 @@ class RandomSampleCorruption(object):
             )
             corrupted_graph_index = next(iter(sample))
             corrupted_graph = self.__train_data[corrupted_graph_index]
+            """
+
+            # Get the data loader of the train if we are in training mode and the validation one if we are in the test
+            iter_loader = self.__iter_train_data if self.__training else self.__iter_val_data
+
+            # Try to get next item
+            try:
+                corrupted_graph = next(iter_loader)
+
+            # On data loader stop, reset it
+            except StopIteration:
+                if self.__training:
+                    self.__iter_train_data = iter(self.__train_data)
+                    corrupted_graph = next(self.__iter_train_data)
+                else:
+                    self.__iter_val_data = iter(self.__val_data)
+                    corrupted_graph = next(self.__iter_val_data)
+
             corrupted_graph.to(self.__device)
             corrupted_edges = corrupted_graph.edge_index
 
