@@ -1,11 +1,9 @@
 import os
-from functools import partial
 from typing import final
 import torch
 from torch.optim import Adam, Adadelta
 from torch_geometric.loader import DataLoader
 from torchinfo import torchinfo
-from models.layers import GCNConvBlock
 from models.pretraining.encoders import RevGATConvEncoder, RevGCNEncoder
 from models.pretraining.graph_infomax import readout_function, DeepGraphInfomaxV2 as DGI, \
     train_DGI, RandomSampleCorruption
@@ -15,7 +13,7 @@ from preprocessing.dataset import load_dataset
 
 BATCH_SIZE: final = 500
 EPOCHS: final = 250
-EXPERIMENT_NAME: final = 'dgi_rev_gcn_test1'
+EXPERIMENT_NAME: final = 'dgi_rev_gcn_test2'
 EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "pretraining", "dgi")
 
 
@@ -27,6 +25,9 @@ def main():
     dl_train = DataLoader(ds_train, batch_size=BATCH_SIZE, shuffle=True)
     dl_val = DataLoader(ds_val, batch_size=BATCH_SIZE, shuffle=True)
     # dl_test = DataLoader(ds_test, batch_size=BATCH_SIZE, shuffle=True)
+
+    dl_train_corruption = DataLoader(ds_train, batch_size=BATCH_SIZE, shuffle=True)
+    dl_val_corruption = DataLoader(ds_val, batch_size=BATCH_SIZE, shuffle=True)
 
     in_channels = 10
 
@@ -108,7 +109,7 @@ def main():
     )
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    corruption = RandomSampleCorruption(train_data=ds_train, val_data=ds_val, device=device)
+    corruption = RandomSampleCorruption(train_data=dl_train_corruption, val_data=dl_val_corruption, device=device)
     dgi = DGI(
         hidden_channels=50,
         encoder=encoder,
@@ -121,7 +122,7 @@ def main():
     print(dgi)
     print(torchinfo.summary(dgi))
 
-    #optimizer = Adam(dgi.parameters(), lr=0.01)
+    # optimizer = Adam(dgi.parameters(), lr=0.01)
     optimizer = Adadelta(dgi.parameters())
     model = train_DGI(
         dgi,
