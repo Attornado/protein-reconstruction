@@ -359,14 +359,14 @@ def train_vgae(model: VGAEv2, train_data: DataLoader, val_data: DataLoader, epoc
     mht.plot_metrics(
         ['auc_val'],
         figsize=FIGURE_SIZE_DEFAULT,
-        traced_min_metric='auc_val',
+        traced_max_metric='auc_val',
         store_path=os.path.join(f"{experiment_path}", "auc.svg")
     )
 
     mht.plot_metrics(
         ['avg_precision_val'],
         figsize=FIGURE_SIZE_DEFAULT,
-        traced_min_metric='avg_precision_val',
+        traced_max_metric='avg_precision_val',
         store_path=os.path.join(f"{experiment_path}", "avg_precision.svg")
     )
 

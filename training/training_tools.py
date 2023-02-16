@@ -133,7 +133,8 @@ class MetricsHistoryTracer(object):
             self.__metrics[metric] = np.concatenate((self.__metrics[metric], values), -1)
 
     def plot_metrics(self, metrics: Optional[Iterable[str]] = None, figsize: tuple[int, int] = FIGURE_SIZE_DEFAULT,
-                     traced_min_metric: Optional[str] = None, store_path: Optional[str] = None):
+                     traced_min_metric: Optional[str] = None, traced_max_metric: Optional[str] = None,
+                     store_path: Optional[str] = None):
 
         if metrics is None:
             metrics = list(self.__metrics.keys())
@@ -155,9 +156,14 @@ class MetricsHistoryTracer(object):
             if len(metric_history) > 0:
                 plt.plot(range(1, len(metric_history) + 1), metric_history, label=f'{metric}')
                 if metric == traced_min_metric:
-                    # Find position of lowest metric
+                    # Find position of the lowest metric point
                     min_position = np.argmin(metric_history) + 1
                     plt.axvline(min_position, linestyle='--', color='r', label=f'{metric} minimum')
+
+            if metric == traced_min_metric:
+                # Find position of the highest metric point
+                max_position = np.argmax(metric_history) + 1
+                plt.axvline(max_position, linestyle='--', color='r', label=f'{metric} maximum')
 
             if len(metric_history) > x_limit:
                 x_limit = len(metric_history)
