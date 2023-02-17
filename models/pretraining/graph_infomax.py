@@ -256,13 +256,27 @@ class DeepGraphInfomaxV2(DeepGraphInfomax, SerializableModule):
 
         true_positive = torch.count_nonzero(pos_pred)
         true_negative = torch.count_nonzero(neg_pred)
-        false_positive = neg_pred.shape[-1] - true_negative
-        false_negative = pos_pred.shape[-1] - true_positive
+        false_positive = pos_pred.shape[0] - true_positive
+        false_negative = neg_pred.shape[0] - true_negative
 
-        precision = true_positive / (true_positive + false_positive)
-        recall = true_negative / (true_positive + false_negative)
-        acc = (true_positive + true_negative) / (true_positive + true_negative + false_positive + false_negative)
-        f1_score = (2 * precision * recall) / (precision + recall)
+        if float(true_positive) + float(false_positive) == 0:
+            precision = 0
+        else:
+            precision = true_positive / (true_positive + false_positive)
+        if float(true_positive) + float(false_negative) == 0:
+            recall = 0
+        else:
+            recall = true_positive / (true_positive + false_negative)
+
+        if float(true_positive) + float(false_negative) + float(true_negative) + float(false_positive) == 0:
+            acc = 0
+        else:
+            acc = (true_positive + true_negative) / (true_positive + true_negative + false_positive + false_negative)
+
+        if float(precision) + float(recall) == 0:
+            f1_score = 0
+        else:
+            f1_score = (2 * precision * recall) / (precision + recall)
 
         return precision, recall, acc, f1_score
 

@@ -36,7 +36,8 @@ def corruption_proxy(x: torch.Tensor, edge_index: torch.Tensor, *args, **kwargs)
     g.add_edge(1, 4, edge_weight=0.3)
     g.add_edge(4, 3, edge_weight=1.5)
 
-    pyg = tgc.from_networkx(g)
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    pyg = tgc.from_networkx(g).to(device)
     return pyg.x, pyg.edge_index, pyg.edge_weight
 
 
@@ -61,7 +62,7 @@ def main():
 
     # dgi based encoder
     dgi = DGI(
-        hidden_channels=2,
+        hidden_channels=3,
         encoder=rev_gat_enc,
         readout=readout_function,
         corruption=corruption_proxy,
@@ -70,13 +71,20 @@ def main():
     )
 
     print("launching model's forward...")
-    dgi(x=g.x, edge_index=g.edge_index, edge_attr=g.edge_weight)
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    dgi = dgi.to(device)
+    g = g.to(device)
+    print(dgi(x=g.x, edge_index=g.edge_index, edge_attr=g.edge_weight))
     print("forward runs without errors!")
+
+    print("Testing model metrics...")
+    precision, recall, acc, f1_score = dgi.test_discriminator(x=g.x, edge_index=g.edge_index, edge_attr=g.edge_weight)
+    print(f"precision: {precision}, recall: {recall}, f1_score: {f1_score}, accuracy: {acc}")
 
     print("serializing DGI...")
     constr_params = dgi.serialize_constructor_params()
     state_dict = dgi.state_dict()
-    dgi2 = DGI.from_constructor_params(constr_params, RevGATConvEncoder, readout_function, corruption_proxy)
+    dgi2 = DGI.from_constructor_params(constr_params, RevGATConvEncoder, readout_function, corruption_proxy).to(device)
     dgi2.load_state_dict(state_dict)
     print("model serialized correctly")
 
@@ -85,8 +93,6 @@ def main():
     print(dgi(x=g.x, edge_index=g.edge_index, edge_attr=g.edge_weight))
     print("\n\nDeserialized: ")
     print(dgi2(x=g.x, edge_index=g.edge_index, edge_attr=g.edge_weight))
-
-
 
 
 if __name__ == "__main__":

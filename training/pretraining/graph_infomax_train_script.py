@@ -99,9 +99,9 @@ def main():
 
     encoder = RevGCNEncoder(
         in_channels=in_channels,
-        hidden_channels=50,
-        out_channels=50,
-        num_convs=100,
+        hidden_channels=30,
+        out_channels=30,
+        num_convs=50,
         improved=True,
         dropout=0.0,
         num_groups=10,
@@ -111,7 +111,7 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     corruption = RandomSampleCorruption(train_data=dl_train_corruption, val_data=dl_val_corruption, device=device)
     dgi = DGI(
-        hidden_channels=50,
+        hidden_channels=30,
         encoder=encoder,
         normalize_hidden=True,
         readout=readout_function,
