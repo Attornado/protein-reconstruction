@@ -4,16 +4,16 @@ import torch
 from torch.optim import Adam, Adadelta
 from torch_geometric.loader import DataLoader
 from torchinfo import torchinfo
-from models.pretraining.encoders import RevGATConvEncoder, RevGCNEncoder
+from models.pretraining.encoders import RevGATConvEncoder, RevGCNEncoder, SimpleGCNEncoder, RevSAGEConvEncoder
 from models.pretraining.graph_infomax import readout_function, DeepGraphInfomaxV2 as DGI, \
-    train_DGI, RandomSampleCorruption
+    train_DGI, RandomSampleCorruption, MeanPoolReadout
 from preprocessing.constants import PRETRAIN_CLEANED_TRAIN, PRETRAIN_CLEANED_VAL, DATA_PATH
 from preprocessing.dataset import load_dataset
 
 
 BATCH_SIZE: final = 500
-EPOCHS: final = 250
-EXPERIMENT_NAME: final = 'dgi_rev_gcn_test2'
+EPOCHS: final = 200
+EXPERIMENT_NAME: final = 'dgi_rev_gcn_test4'
 EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "pretraining", "dgi")
 
 
@@ -47,6 +47,17 @@ def main():
         out_channels=10,
         conv_dims=[10, 10, 10, 10],
         dropout=0.0
+    )
+    
+     encoder = RevGCNEncoder(
+        in_channels=in_channels,
+        hidden_channels=30,
+        out_channels=30,
+        num_convs=6,  # was 30
+        improved=False,
+        dropout=0.0,
+        num_groups=10,
+        normalize_hidden=True
     )
     
      encoder = RevSAGEConvEncoder(
@@ -97,24 +108,27 @@ def main():
     )
     """
 
-    encoder = RevGCNEncoder(
+    encoder = RevSAGEConvEncoder(
         in_channels=in_channels,
-        hidden_channels=30,
-        out_channels=30,
-        num_convs=50,
-        improved=True,
+        hidden_channels=40,
+        out_channels=40,
+        num_convs=60,
         dropout=0.0,
+        project=False,
+        root_weight=True,
+        aggr="mean",
         num_groups=10,
         normalize_hidden=True
     )
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    readout = MeanPoolReadout(device=device, sigmoid=False)
     corruption = RandomSampleCorruption(train_data=dl_train_corruption, val_data=dl_val_corruption, device=device)
     dgi = DGI(
-        hidden_channels=30,
+        hidden_channels=40,
         encoder=encoder,
         normalize_hidden=True,
-        readout=readout_function,
+        readout=readout,
         corruption=corruption,
         dropout=0.0
     )

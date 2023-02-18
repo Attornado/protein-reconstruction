@@ -1,6 +1,6 @@
 import os
 import torch
-from typing import Callable, Type
+from typing import Callable, Type, Optional
 from torch.nn import LayerNorm
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
@@ -23,6 +23,60 @@ def readout_function(encoding: torch.Tensor, x: torch.Tensor, edge_index, batch=
     return torch.sigmoid(
         global_mean_pool(x=encoding, batch=batch, size=None)
     )
+
+
+class MeanPoolReadout(object):
+    def __init__(self, device=None, sigmoid: bool = False):
+        self.__sigmoid: bool = sigmoid
+        self.__batch: Optional[torch.Tensor] = None  # last batch
+        if device is not None:
+            self.__device = device
+        else:
+            self.__device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    def __call__(self, encoding: torch.Tensor, x: torch.Tensor, edge_index,
+                 batch: Optional[torch.Tensor] = None, *args, **kwargs):
+        # TODO: test this
+        if batch is None and self.__batch is not None:
+            batch = self.__batch
+        elif batch is None:
+            # assume it's a single batch if not given
+            batch = torch.zeros((encoding.shape[-2])).type(torch.int64).to(self.__device)
+
+        # Update the batch in any case
+        self.__batch = batch
+
+        # must test this
+        if self.__sigmoid:
+            return torch.sigmoid(
+                global_mean_pool(x=encoding, batch=batch, size=None)
+            )
+        else:
+            return global_mean_pool(x=encoding, batch=batch, size=None)
+
+    @property
+    def sigmoid(self) -> bool:
+        return self.__sigmoid
+
+    @sigmoid.setter
+    def sigmoid(self, sigmoid: bool):
+        self.__sigmoid = sigmoid
+
+    @property
+    def batch(self) -> Optional[torch.Tensor]:
+        return self.__batch
+
+    @batch.setter
+    def batch(self, batch: torch.Tensor):
+        self.__batch = batch
+
+    @property
+    def device(self):
+        return self.__device
+
+    @device.setter
+    def device(self, device):
+        self.__device = device
 
 
 class RandomSampleCorruption(object):
@@ -172,7 +226,6 @@ class DeepGraphInfomaxV2(DeepGraphInfomax, SerializableModule):
 
     # noinspection PyTypedDict
     def serialize_constructor_params(self, *args, **kwargs) -> dict:
-
         constructor_params = {
             "hidden_channels": self.hidden_channels,
             "dropout": self.__dropout,
@@ -225,7 +278,11 @@ class DeepGraphInfomaxV2(DeepGraphInfomax, SerializableModule):
             dropout=dropout
         )
 
-    def forward(self, x, edge_index, *args, **kwargs):
+    def forward(self, x, edge_index, batch=None, *args, **kwargs):
+        # Setup batch if readout requires it
+        if isinstance(self.summary, MeanPoolReadout):
+            self.summary.batch = batch
+
         pos_z, neg_z, summary = super().forward(x=x, edge_index=edge_index, *args, **kwargs)
 
         if self._norm is not None:
@@ -346,14 +403,14 @@ def test_step_DGI(model: DeepGraphInfomaxV2, val_data: DataLoader, device, use_e
 
         # Encoder output
         if use_edge_weight and use_edge_attr:
-            pos_z, neg_z, summary = model(data.x, data.edge_index, edge_attr=data.edge_attr,
+            pos_z, neg_z, summary = model(data.x, data.edge_index, batch=data.batch, edge_attr=data.edge_attr,
                                           edge_weight=data.edge_weight)
         elif use_edge_attr:
-            pos_z, neg_z, summary = model(data.x, data.edge_index, edge_attr=data.edge_attr)
+            pos_z, neg_z, summary = model(data.x, data.edge_index, batch=data.batch, edge_attr=data.edge_attr)
         elif use_edge_weight:
-            pos_z, neg_z, summary = model(data.x, data.edge_index, edge_weight=data.edge_weight)
+            pos_z, neg_z, summary = model(data.x, data.edge_index, batch=data.batch, edge_weight=data.edge_weight)
         else:
-            pos_z, neg_z, summary = model(data.x, data.edge_index)
+            pos_z, neg_z, summary = model(data.x, data.edge_index, batch=data.batch)
 
         loss = model.loss(pos_z, neg_z, summary)
         precision, recall, accuracy, f1 = model.test_discriminator(data.x, data.edge_index, threshold)
