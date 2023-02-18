@@ -13,18 +13,6 @@ from training.training_tools import FIGURE_SIZE_DEFAULT, MetricsHistoryTracer, E
 # from torch_geometric.data import Dataset
 
 
-def readout_function(encoding: torch.Tensor, x: torch.Tensor, edge_index, batch=None, *args, **kwargs):
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    if batch is None:
-        # assume it's a single batch if not given
-        batch = torch.zeros((encoding.shape[-2])).type(torch.int64).to(device)
-
-    # must test this
-    return torch.sigmoid(
-        global_mean_pool(x=encoding, batch=batch, size=None)
-    )
-
-
 class MeanPoolReadout(object):
     def __init__(self, device=None, sigmoid: bool = False):
         self.__sigmoid: bool = sigmoid
@@ -40,13 +28,12 @@ class MeanPoolReadout(object):
         if batch is None and self.__batch is not None:
             batch = self.__batch
         elif batch is None:
-            # assume it's a single batch if not given
+            # Assume it's a single batch if not given
             batch = torch.zeros((encoding.shape[-2])).type(torch.int64).to(self.__device)
 
         # Update the batch in any case
         self.__batch = batch
 
-        # must test this
         if self.__sigmoid:
             return torch.sigmoid(
                 global_mean_pool(x=encoding, batch=batch, size=None)
@@ -67,7 +54,7 @@ class MeanPoolReadout(object):
         return self.__batch
 
     @batch.setter
-    def batch(self, batch: torch.Tensor):
+    def batch(self, batch: Optional[torch.Tensor]):
         self.__batch = batch
 
     @property
@@ -79,6 +66,8 @@ class MeanPoolReadout(object):
         self.__device = device
 
 
+# TODO: define another corruption
+
 class RandomSampleCorruption(object):
     def __init__(self, train_data: DataLoader, val_data: DataLoader, device):
         self.__train_data = train_data
@@ -88,7 +77,7 @@ class RandomSampleCorruption(object):
         self.__device = device
         self.__training = True
 
-    def __call__(self, x: torch.Tensor, edge_index: torch.Tensor, *args, **kwargs):
+    def __call__(self, x: torch.Tensor, edge_index: torch.Tensor, return_batch: bool = False, *args, **kwargs):
         # TODO: test this
         # Loop until we don't find a different batch of graphs comparing the edges
         corrupted_edges = edge_index
@@ -123,7 +112,7 @@ class RandomSampleCorruption(object):
                     self.__iter_val_data = iter(self.__val_data)
                     corrupted_graph = next(self.__iter_val_data)
 
-            corrupted_graph.to(self.__device)
+            corrupted_graph = corrupted_graph.to(self.__device)
             corrupted_edges = corrupted_graph.edge_index
 
         return_tuple = [corrupted_graph.x, corrupted_graph.edge_index]
@@ -131,6 +120,9 @@ class RandomSampleCorruption(object):
         for k in kwargs:
             if k in corrupted_graph:
                 return_tuple.append(corrupted_graph[k])  # add other required graph features
+
+        if return_batch:
+            return_tuple.append(corrupted_graph.batch)
 
         return tuple(return_tuple)
 
@@ -293,23 +285,72 @@ class DeepGraphInfomaxV2(DeepGraphInfomax, SerializableModule):
             summary = F.dropout(summary, p=self.__dropout, training=self.training)
         return pos_z, neg_z, summary
 
-    def test_discriminator(self, x, edge_index, threshold=0.5, *args, **kwargs):
+    def test_discriminator(self, x, edge_index, batch: Optional[torch.Tensor] = None, threshold=0.5, *args, **kwargs):
         """
         Takes in the model, the data, and a threshold value. It then calculates the precision, recall, accuracy, and f1
         score of the model.
 
         :param x: the node features
-        :param edge_index: The edge index of the graph
+        :param edge_index: The edge index of the graph data
+        :param batch: batch index of the given graph data
         :param threshold: The threshold for the discriminator to classify a node as positive or negative
         :return: Precision, recall, accuracy, and f1 score.
         """
-        pos_z, neg_z, summary = self(x, edge_index, *args, **kwargs)
+        # pos_z, neg_z, summary = self(x, edge_index, batch=batch, *args, **kwargs)
 
+        # Get positive sample predictions and the corresponding summary
+        pos_z = self.encoder(x, edge_index, *args, **kwargs)
+        summary = self.summary(pos_z, x, edge_index, batch=batch, *args, **kwargs)
+
+        # Get corrupted graphs and corresponding batch index
+        neg_batch = None
+        if batch is not None:
+            cor = self.corruption(x, edge_index, return_batch=True, *args, **kwargs)
+            neg_batch = cor[-1]  # get the negative sample batching
+            cor = cor[0:-1]  # remove the batch
+        else:
+            cor = self.corruption(x, edge_index, *args, **kwargs)
+
+        cor = cor if isinstance(cor, tuple) else (cor, )
+        neg_z = self.encoder(*cor)
+
+        # Get positive and negative predictions
         pos = self.discriminate(pos_z, summary, sigmoid=True)
         neg = 1 - self.discriminate(neg_z, summary, sigmoid=True)
 
-        pos_pred = (pos >= threshold).float()
-        neg_pred = (neg >= threshold).float()
+        # Slice predictions by batch
+        pos_aggregated = pos
+        neg_aggregated = neg
+        if batch is not None:
+            # pos_transpose = torch.transpose(pos, dim0=-1, dim1=0)
+            # neg_transpose = torch.transpose(neg, dim0=-1, dim1=0)
+            pos_aggregated = []
+            neg_aggregated = []
+
+            # For each node in the positive batch
+            for i in range(0, batch.shape[0]):
+
+                # Get the graph of the node
+                graph_index = batch[i]
+
+                # Get the predictions for the corresponding graph
+                pos_aggregated.append(float(pos[i][graph_index]))
+
+            # For each node in the negative batch
+            for i in range(0, neg_batch.shape[0]):
+
+                # Get the graph of the node
+                graph_index = neg_batch[i]
+
+                # Get the predictions for the corresponding graph
+                neg_aggregated.append(float(neg[i][graph_index]))
+
+            # Convert to tensor
+            pos_aggregated = torch.tensor(pos_aggregated, device=pos.device)
+            neg_aggregated = torch.tensor(neg_aggregated, device=pos.device)
+
+        pos_pred = (pos_aggregated >= threshold).float()
+        neg_pred = (neg_aggregated >= threshold).float()
 
         true_positive = torch.count_nonzero(pos_pred)
         true_negative = torch.count_nonzero(neg_pred)
@@ -355,18 +396,14 @@ def train_step_DGI(model: DeepGraphInfomaxV2, train_data: DataLoader, optimizer,
 
         # Encoder output
         if use_edge_weight and use_edge_attr:
-            pos_z, neg_z, summary = model(
-                data.x,
-                data.edge_index,
-                edge_attr=data.edge_attr,
-                edge_weight=data.edge_weight
-            )
+            pos_z, neg_z, summary = model(data.x, data.edge_index, batch=data.batch, edge_attr=data.edge_attr,
+                                          edge_weight=data.edge_weight)
         elif use_edge_attr:
-            pos_z, neg_z, summary = model(data.x, data.edge_index, edge_attr=data.edge_attr)
+            pos_z, neg_z, summary = model(data.x, data.edge_index, batch=data.batch, edge_attr=data.edge_attr)
         elif use_edge_weight:
-            pos_z, neg_z, summary = model(data.x, data.edge_index, edge_weight=data.edge_weight)
+            pos_z, neg_z, summary = model(data.x, data.edge_index, batch=data.batch, edge_weight=data.edge_weight)
         else:
-            pos_z, neg_z, summary = model(data.x, data.edge_index)
+            pos_z, neg_z, summary = model(data.x, data.edge_index, batch=data.batch)
 
         loss = model.loss(pos_z, neg_z, summary)
 
@@ -413,7 +450,8 @@ def test_step_DGI(model: DeepGraphInfomaxV2, val_data: DataLoader, device, use_e
             pos_z, neg_z, summary = model(data.x, data.edge_index, batch=data.batch)
 
         loss = model.loss(pos_z, neg_z, summary)
-        precision, recall, accuracy, f1 = model.test_discriminator(data.x, data.edge_index, threshold)
+        precision, recall, accuracy, f1 = model.test_discriminator(data.x, data.edge_index,
+                                                                   batch=data.batch, threshold=threshold)
 
         running_val_loss = running_val_loss + 1 / steps * (loss.item() - running_val_loss)
         running_precision = running_precision + 1 / steps * (precision - running_precision)
