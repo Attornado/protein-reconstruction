@@ -113,7 +113,7 @@ def main():
         hidden_channels=40,
         out_channels=40,
         num_convs=60,
-        dropout=0.0,
+        dropout=0.0, # change this to 0.1
         project=False,
         root_weight=True,
         aggr="mean",
