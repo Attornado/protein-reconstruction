@@ -1,3 +1,4 @@
+import abc
 import os
 import torch
 from typing import Callable, Type, Optional
@@ -14,11 +15,18 @@ from training.training_tools import FIGURE_SIZE_DEFAULT, MetricsHistoryTracer, E
 
 
 class MeanPoolReadout(object):
-    def __init__(self, device=None, sigmoid: bool = False):
+    def __init__(self, device: Optional[torch.device] = None, sigmoid: bool = False):
+        """
+        Represents a mean pooling readout function that tracks the last batch of the given Data.
+
+        :param device: The device to use for the computation.
+        :param sigmoid: If True, the output will be passed through a sigmoid activation function, defaults to False
+        :type sigmoid: bool (optional)
+        """
         self.__sigmoid: bool = sigmoid
         self.__batch: Optional[torch.Tensor] = None  # last batch
         if device is not None:
-            self.__device = device
+            self.__device: Optional[torch.device] = device
         else:
             self.__device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -58,18 +66,120 @@ class MeanPoolReadout(object):
         self.__batch = batch
 
     @property
-    def device(self):
+    def device(self) -> Optional[torch.device]:
         return self.__device
 
     @device.setter
-    def device(self, device):
+    def device(self, device: Optional[torch.device]):
         self.__device = device
 
 
-# TODO: define another corruption
+class CorruptionFunction(abc.ABC):
+    def __init__(self, device: torch.device):
+        """
+        This class represents a generic corruption function to be used in Deep Graph Infomax models.
 
-class RandomSampleCorruption(object):
-    def __init__(self, train_data: DataLoader, val_data: DataLoader, device):
+        :param device: The device to run the corruption function on
+        :type device: torch.device
+        """
+        super().__init__()
+        self.__device = device
+        self.__batch: Optional[torch.Tensor] = None  # last corrupted batch
+
+    @property
+    def batch(self) -> Optional[torch.Tensor]:
+        """
+        Returns the batch index tensor the last of corrupted data if it exists, None otherwise.
+
+        rtype: Optional[torch.Tensor]
+        """
+        return self.__batch
+
+    @batch.setter
+    def batch(self, batch: Optional[torch.Tensor]):
+        """
+        Sets the last batch index tensor.
+
+        :param batch: last batch index of the corrupted data.
+        :type batch: Optional[torch.Tensor]
+        """
+        self.__batch = batch
+
+    @property
+    def device(self) -> torch.device:
+        """
+        Returns the corruption function device.
+
+        :rtype: torch.device
+        """
+        return self.__device
+
+    @device.setter
+    def device(self, device: torch.device):
+        """
+        Sets the device the corruption function is running on.
+
+        :param device: The device to run the corruption on
+        :type device: torch.device
+        """
+        self.__device = device
+
+    def to(self, device: torch.device):
+        """
+        Sets the corruption function device to the given one.
+
+        :param device: The device to run the corruption on
+        :type device: torch.device
+        """
+        self.device = device
+
+    def __call__(self, x: torch.Tensor, edge_index: torch.Tensor, return_batch: bool = False,
+                 batch: Optional[torch.Tensor] = None, *args, **kwargs):
+        """
+        Takes graph signal x and its edge index, returning a corrupted graph.
+
+        :param x: node feature signal
+        :type x: torch.Tensor
+        :param edge_index: The edge indices of the graph
+        :type edge_index: torch.Tensor
+        :param return_batch: If True, the output will be a batch of graphs. If False, the output will not contain the
+            batch information.
+        :type return_batch: bool (optional)
+        :param batch: batch index of the input data
+        :type batch: Optional[torch.Tensor] (optional)
+        """
+        raise NotImplementedError(f"__call__ method must be implemented in a {self.__class__.__name__} subclass.")
+
+
+class RandomPermutationCorruption(CorruptionFunction):
+    def __init__(self, device: torch.device):
+        super().__init__(device)
+
+    def __call__(self, x: torch.Tensor, edge_index: torch.Tensor, return_batch: bool = False,
+                 batch: Optional[torch.Tensor] = None, *args, **kwargs):
+
+        # Permute node features
+        permuted_x = x[torch.randperm(x.shape[0])]
+
+        # Maybe permute some edges too?
+
+        return_tuple = [permuted_x, edge_index]
+
+        # Get additional features from kwargs
+        for k in kwargs:
+            return_tuple.append(kwargs[k])  # add other required graph features
+
+        # Batch remains the same
+        self.batch = batch
+        if return_batch:
+            return_tuple.append(batch)
+
+        return tuple(return_tuple)
+
+
+class RandomSampleCorruption(CorruptionFunction):
+    def __init__(self, train_data: DataLoader, val_data: DataLoader, device: torch.device):
+        super().__init__(device)
         self.__train_data = train_data
         self.__val_data = val_data
         self.__iter_train_data = iter(train_data)
@@ -77,24 +187,12 @@ class RandomSampleCorruption(object):
         self.__device = device
         self.__training = True
 
-    def __call__(self, x: torch.Tensor, edge_index: torch.Tensor, return_batch: bool = False, *args, **kwargs):
-        # TODO: test this
+    def __call__(self, x: torch.Tensor, edge_index: torch.Tensor, return_batch: bool = False,
+                 batch: Optional[torch.Tensor] = None, *args, **kwargs):
         # Loop until we don't find a different batch of graphs comparing the edges
         corrupted_edges = edge_index
         corrupted_graph = None
         while corrupted_edges.equal(edge_index):
-
-            """
-            dataset = self.__train_data if self.__training else self.__val_data
-            sample = RandomSampler(
-                dataset,
-                replacement=False,
-                num_samples=1,
-                generator=None
-            )
-            corrupted_graph_index = next(iter(sample))
-            corrupted_graph = self.__train_data[corrupted_graph_index]
-            """
 
             # Get the data loader of the train if we are in training mode and the validation one if we are in the test
             iter_loader = self.__iter_train_data if self.__training else self.__iter_val_data
@@ -121,6 +219,7 @@ class RandomSampleCorruption(object):
             if k in corrupted_graph:
                 return_tuple.append(corrupted_graph[k])  # add other required graph features
 
+        self.batch = corrupted_graph.batch
         if return_batch:
             return_tuple.append(corrupted_graph.batch)
 
@@ -134,17 +233,6 @@ class RandomSampleCorruption(object):
     def training(self, train: bool):
         self.__training = train
 
-    @property
-    def device(self):
-        return self.__device
-
-    @device.setter
-    def device(self, device):
-        self.__device = device
-
-    def to(self, device):
-        self.device = device
-
     def eval(self):
         self.training = False
 
@@ -152,50 +240,12 @@ class RandomSampleCorruption(object):
         self.training = True
 
 
-'''
-def random_sample_corruption(x: torch.Tensor, edge_index: torch.Tensor, training_set: DataLoader, *args, **kwargs) \
-        -> tuple:
-    """
-    Takes a DataLoader and returns a single random sample from it.
-
-    :param x: graph node-level feature tensor
-    :type x: torch.Tensor
-    :param edge_index: edge index tensor
-    :type edge_index: torch.Tensor
-    :param training_set: DataLoader of the graph dataset
-    :type training_set: DataLoader
-    :return: A single batch sample from the training set.
-    """
-
-    corrupted_edges = edge_index
-    corrupted_graph = None
-    while corrupted_edges.equal(edge_index):
-        train_sample = RandomSampler(
-            training_set,
-            replacement=False,
-            num_samples=1,
-            generator=None
-        )
-        corrupted_graph = next(iter(train_sample))
-        corrupted_edges = corrupted_graph.edge_index
-
-    return_tuple = [corrupted_graph.x, corrupted_graph.edge_index]
-
-    for k in kwargs:
-        if k in corrupted_graph:
-            return_tuple.append(corrupted_graph[k])  # add other required graph features
-
-    return tuple(return_tuple)
-'''
-
-
 class DeepGraphInfomaxV2(DeepGraphInfomax, SerializableModule):
-    # TODO check readout function inside the init
     def __init__(self,
                  hidden_channels: int,
                  encoder: SerializableModule,
                  readout: Callable,
-                 corruption: Callable,
+                 corruption: CorruptionFunction,
                  normalize_hidden: bool = True,
                  dropout: float = 0.0
                  ):
@@ -248,7 +298,7 @@ class DeepGraphInfomaxV2(DeepGraphInfomax, SerializableModule):
                                 constructor_params: dict,
                                 encoder_constructor: Type[SerializableModule],
                                 readout: Callable,
-                                corruption: Callable,
+                                corruption: CorruptionFunction,
                                 *args, **kwargs):
         # Get encoder constructor params/state dict and construct it
         enc_state_dict = constructor_params["encoder"]["state_dict"]
@@ -305,7 +355,7 @@ class DeepGraphInfomaxV2(DeepGraphInfomax, SerializableModule):
         # Get corrupted graphs and corresponding batch index
         neg_batch = None
         if batch is not None:
-            cor = self.corruption(x, edge_index, return_batch=True, *args, **kwargs)
+            cor = self.corruption(x, edge_index, return_batch=True, batch=batch, *args, **kwargs)
             neg_batch = cor[-1]  # get the negative sample batching
             cor = cor[0:-1]  # remove the batch
         else:
