@@ -5,16 +5,17 @@ from torch.optim import Adam, Adadelta
 from torch_geometric.loader import DataLoader
 from torchinfo import torchinfo
 from models.pretraining.encoders import RevGATConvEncoder, RevGCNEncoder, SimpleGCNEncoder, RevSAGEConvEncoder
-from models.pretraining.graph_infomax import readout_function, DeepGraphInfomaxV2 as DGI, \
-    train_DGI, RandomSampleCorruption, MeanPoolReadout
+from models.pretraining.graph_infomax import DeepGraphInfomaxV2, train_DGI, RandomSampleCorruption, MeanPoolReadout, \
+    RandomPermutationCorruption
 from preprocessing.constants import PRETRAIN_CLEANED_TRAIN, PRETRAIN_CLEANED_VAL, DATA_PATH
 from preprocessing.dataset import load_dataset
 
 
 BATCH_SIZE: final = 500
-EPOCHS: final = 200
-EXPERIMENT_NAME: final = 'dgi_rev_gcn_test4'
+EPOCHS: final = 100
+EXPERIMENT_NAME: final = 'dgi_rev_gat_test7'
 EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "pretraining", "dgi")
+RESTORE_CHECKPOINT: final = True
 
 
 def main():
@@ -62,27 +63,6 @@ def main():
     
      encoder = RevSAGEConvEncoder(
         in_channels=in_channels,
-        hidden_channels=40,
-        out_channels=40,
-        num_convs=60,
-        dropout=0.0,
-        project=False,
-        root_weight=True,
-        aggr="mean",
-        num_groups=10,
-        normalize_hidden=True
-    )
-
-    encoder_mu = SAGEConvBlock(
-        in_channels=40,
-        out_channels=40,
-        project=False,
-        root_weight=True,
-        aggr="mean"
-    )
-    
-     encoder = RevSAGEConvEncoder(
-        in_channels=in_channels,
         hidden_channels=10,
         out_channels=10,
         num_convs=20,
@@ -108,24 +88,23 @@ def main():
     )
     """
 
-    encoder = RevSAGEConvEncoder(
+    encoder = RevGATConvEncoder(
         in_channels=in_channels,
-        hidden_channels=40,
-        out_channels=40,
+        hidden_channels=100,
+        out_channels=100,
         num_convs=60,
-        dropout=0.0, # change this to 0.1
-        project=False,
-        root_weight=True,
-        aggr="mean",
-        num_groups=10,
-        normalize_hidden=True
+        dropout=0.1,  # was 0
+        heads=4,
+        concat=False,
+        num_groups=25
     )
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     readout = MeanPoolReadout(device=device, sigmoid=False)
-    corruption = RandomSampleCorruption(train_data=dl_train_corruption, val_data=dl_val_corruption, device=device)
-    dgi = DGI(
-        hidden_channels=40,
+    # corruption = RandomSampleCorruption(train_data=dl_train_corruption, val_data=dl_val_corruption, device=device)
+    corruption = RandomPermutationCorruption(device=device)
+    dgi = DeepGraphInfomaxV2(
+        hidden_channels=100,
         encoder=encoder,
         normalize_hidden=True,
         readout=readout,
@@ -134,7 +113,21 @@ def main():
     )
 
     print(dgi)
-    print(torchinfo.summary(dgi))
+    print(torchinfo.summary(dgi, depth=5))
+
+    full_experiment_path = os.path.join(EXPERIMENT_PATH, EXPERIMENT_NAME)
+    checkpoint_path = os.path.join(full_experiment_path, "checkpoint.pt")
+    full_state_dict_path = os.path.join(full_experiment_path, "state_dict.pt")
+    if RESTORE_CHECKPOINT and os.path.exists(checkpoint_path):
+        print("Checkpoint found, loading state dict from checkpoint...")
+        state_dict = torch.load(checkpoint_path)
+        dgi.load_state_dict(state_dict)
+        print("State dict loaded.")
+    elif RESTORE_CHECKPOINT and os.path.exists(full_state_dict_path):
+        print("Final state dict found, loading state dict...")
+        state_dict = torch.load(full_state_dict_path)
+        dgi.load_state_dict(state_dict)
+        print("State dict loaded.")
 
     # optimizer = Adam(dgi.parameters(), lr=0.01)
     optimizer = Adadelta(dgi.parameters())
@@ -146,10 +139,9 @@ def main():
         optimizer=optimizer,
         experiment_path=EXPERIMENT_PATH,
         experiment_name=EXPERIMENT_NAME,
-        early_stopping_patience=30
+        early_stopping_patience=20
     )
 
-    full_experiment_path = os.path.join(EXPERIMENT_PATH, EXPERIMENT_NAME)
     constructor_params = model.serialize_constructor_params()
     state_dict = model.state_dict()
     torch.save(state_dict, os.path.join(full_experiment_path, "state_dict.pt"))
