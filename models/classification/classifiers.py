@@ -2,11 +2,15 @@ from typing import final, Callable, Type, Optional
 import torch
 from torch import Tensor
 import torch.nn.functional as F
+from torch.nn import CrossEntropyLoss
 from torch_geometric.nn.aggr import LSTMAggregation, SoftmaxAggregation, MaxAggregation, MeanAggregation, SumAggregation
 from torch_geometric.nn.dense import Linear  # , dense_diff_pool this has to be in the "future work"
 from models.layers import SerializableModule
 from functools import partial
+from torchmetrics.functional import accuracy, f1_score, precision, recall
 
+
+CLASSES: final = 7
 
 class ProtMotionNet(SerializableModule):
 
@@ -138,9 +142,47 @@ class ProtMotionNet(SerializableModule):
             return LSTMAggregation(in_channels=channels, out_channels=channels)
         return cls.__READOUTS[readout]
 
-    def test(self, x: torch.Tensor, edge_index: torch.Tensor, y, *args, **kwargs):
-        # TODO: implement this one
-        pass
+    def test(self, x: torch.Tensor, edge_index: torch.Tensor, y, criterion: Callable = CrossEntropyLoss(),
+             top_k: Optional[int] = None, *args, **kwargs) -> (float, Optional[float], float, float, float, float):
 
-    def loss(self, criterion, regularizers: Optional[list] = None):
-        pass
+        # TODO: test this
+
+        # Get the number of classes
+        n_classes = self.__dense_units[-1]
+
+        # Get predictions
+        y_hat = self(x, edge_index, *args, **kwargs)
+
+        # Compute loss
+        loss = self.loss(y_hat=y_hat, y=y, criterion=criterion, *args, **kwargs)
+
+        # Compute the metrics
+        acc = accuracy(preds=y_hat, target=y, task='multiclass', num_classes=n_classes)
+        if top_k is not None:
+            top_k_acc = float(accuracy(preds=y_hat, target=y, task='multiclass', num_classes=n_classes, top_k=top_k))
+        else:
+            top_k_acc = None
+        prec = precision(preds=y_hat, target=y, task='multiclass', num_classes=n_classes, average="weighted")
+        rec = recall(preds=y_hat, target=y, task='multiclass', num_classes=n_classes, average="weighted")
+        f1 = f1_score(preds=y_hat, target=y, task='multiclass', num_classes=n_classes, average="weighted")
+
+        return float(loss), float(acc), top_k_acc, prec, rec, f1
+
+    def loss(self, y,  x: Optional[torch.Tensor] = None, edge_index: Optional[torch.Tensor] = None,
+             y_hat: Optional[torch.Tensor] = None, criterion: Callable = CrossEntropyLoss(),
+             additional_terms: list[Tensor] = None, *args, **kwargs) -> torch.Tensor:
+        # TODO: test this
+
+        # If predictions are not given, compute them using the model
+        if y_hat is None:
+            y_hat = self(x, edge_index, *args, **kwargs)
+
+        # Compute loss with given criterion
+        loss = criterion(y_hat, y)
+
+        # Add pre-computed additional loss terms to the loss
+        if additional_terms is not None:
+            for additional_term in additional_terms:
+                loss = loss + additional_term
+
+        return loss
