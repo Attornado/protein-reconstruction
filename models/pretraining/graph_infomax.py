@@ -30,7 +30,6 @@ class MeanPoolReadout(object):
 
     def __call__(self, encoding: torch.Tensor, x: torch.Tensor, edge_index,
                  batch: Optional[torch.Tensor] = None, *args, **kwargs):
-        # TODO: test this
         if batch is None and self.__batch is not None:
             batch = self.__batch
         elif batch is None:
