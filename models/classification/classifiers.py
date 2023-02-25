@@ -149,6 +149,22 @@ class ProtMotionNet(SerializableModule):
     def test(self, x: torch.Tensor, edge_index: torch.Tensor, y, batch_index: torch.Tensor = None,
              criterion: Callable = CrossEntropyLoss(), top_k: Optional[int] = None, *args, **kwargs) -> \
             (float, Optional[float], float, float, float, float):
+        """
+        This function takes in a graph, and returns the loss, accuracy, top-k accuracy, precision, recall, and F1-score.
+
+        :param x: torch.Tensor = The node features
+        :type x: torch.Tensor
+        :param edge_index: The edge indices of the graph
+        :type edge_index: torch.Tensor
+        :param y: The target labels
+        :param batch_index: The batch index of the nodes
+        :type batch_index: torch.Tensor
+        :param criterion: The loss function to use
+        :type criterion: Callable
+        :param top_k: k for computing top_k accuracy, *args, **kwargs
+        :type top_k: Optional[int]
+        :return: The loss, accuracy, top-k accuracy, precision, recall, and F1-score.
+        """
 
         # TODO: test this
 

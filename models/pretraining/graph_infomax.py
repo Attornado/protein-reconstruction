@@ -30,7 +30,6 @@ class MeanPoolReadout(object):
 
     def __call__(self, encoding: torch.Tensor, x: torch.Tensor, edge_index,
                  batch: Optional[torch.Tensor] = None, *args, **kwargs):
-        # TODO: test this
         if batch is None and self.__batch is not None:
             batch = self.__batch
         elif batch is None:
@@ -450,17 +449,17 @@ class DeepGraphInfomaxV2(DeepGraphInfomax, SerializableModule):
 
 def train_step_DGI(model: DeepGraphInfomaxV2, train_data: DataLoader, optimizer, device,
                    use_edge_weight: bool = False, use_edge_attr: bool = False):
-    # put the model in training mode
+    # Put the model in training mode
     model.train()
 
-    # running average loss over the batches
+    # Running average loss over the batches
     running_loss = 0.0
     steps: int = 1
 
     for data in iter(train_data):
-        # move batch to device
+        # Move batch to device
         data = data.to(device)
-        # reset the optimizer gradients
+        # Reset the optimizer gradients
         optimizer.zero_grad()
 
         # Encoder output
