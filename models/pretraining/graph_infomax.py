@@ -153,17 +153,38 @@ class CorruptionFunction(abc.ABC):
 
 class RandomPermutationCorruption(CorruptionFunction):
     def __init__(self, device: torch.device):
+        """
+        A corruption function that randomly permutes the given data batch features.
+
+        :param device: The device to run the corruption on
+        :type device: torch.device
+        """
         super().__init__(device)
 
     def __call__(self, x: torch.Tensor, edge_index: torch.Tensor, return_batch: bool = False,
                  batch: Optional[torch.Tensor] = None, *args, **kwargs):
+        """
+        Takes graph or batch graph signal x and its edge index, returning a corrupted graph obtained permuting the
+        nodes .
+
+        :param x: node feature signal
+        :type x: torch.Tensor
+        :param edge_index: The edge indices of the graph
+        :type edge_index: torch.Tensor
+        :param return_batch: If True, the output will be a batch of graphs. If False, the output will not contain the
+            batch information.
+        :type return_batch: bool (optional)
+        :param batch: batch index of the input data
+        :type batch: Optional[torch.Tensor] (optional)
+        :return the corrupted graph
+        """
 
         # Permute node features
-        permuted_x = x[torch.randperm(x.shape[0])]
+        corrupted_x = x[torch.randperm(x.shape[0])]
 
-        # Maybe permute some edges too?
+        # Maybe permute some edges too with torch_geometric.utils.negative_sampling.batched_negative_sampling()?
 
-        return_tuple = [permuted_x, edge_index]
+        return_tuple = [corrupted_x, edge_index]
 
         # Get additional features from kwargs
         for k in kwargs:
