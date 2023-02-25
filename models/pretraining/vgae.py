@@ -9,7 +9,6 @@ from torch_geometric.utils import negative_sampling
 from models.pretraining.gae import GraphDecoder
 from models.layers import SerializableModule
 from training.training_tools import MetricsHistoryTracer, EarlyStopping, EARLY_STOP_PATIENCE, FIGURE_SIZE_DEFAULT
-# import copy
 
 
 class VGEncoder(SerializableModule):
