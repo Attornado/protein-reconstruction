@@ -10,8 +10,6 @@ from torch_geometric.nn.models import DeepGraphInfomax
 from models.layers import SerializableModule
 from torch_geometric.nn.pool import global_mean_pool
 from training.training_tools import FIGURE_SIZE_DEFAULT, MetricsHistoryTracer, EarlyStopping, EARLY_STOP_PATIENCE
-# from torch.utils.data import RandomSampler
-# from torch_geometric.data import Dataset
 
 
 class MeanPoolReadout(object):
