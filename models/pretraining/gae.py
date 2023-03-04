@@ -1,32 +1,13 @@
 import os
-from abc import ABC, abstractmethod
 from typing import Optional, Type
 import torch
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn.models.autoencoder import GAE
 from torch.utils.tensorboard import SummaryWriter
 from torch_geometric.utils import negative_sampling
+from models.pretraining.decoders import GraphDecoder
 from models.layers import SerializableModule
 from training.training_tools import FIGURE_SIZE_DEFAULT, MetricsHistoryTracer, EarlyStopping, EARLY_STOP_PATIENCE
-
-
-class GraphDecoder(SerializableModule, ABC):
-
-    def __init__(self, *args, **kwargs):
-        super(GraphDecoder, self).__init__()
-
-    @abstractmethod
-    def forward_all(self, z, sigmoid: bool = True, *args, **kwargs):
-        """
-        Takes the latent space representation z and reconstructs a probabilistic adjacency matrix.
-
-        :param z: the latent space representation of the nodes.
-        :param sigmoid: whether or not to apply a sigmoid function on the final decoder output, normalizing it.
-        :type sigmoid: bool
-
-        :return a probabilistic adjacency matrix for the given input.
-        """
-        raise NotImplementedError("Any GraphDecoder module must implement forward_all() method.")
 
 
 class GAEv2(GAE, SerializableModule):
