@@ -51,7 +51,6 @@ class PointwiseFeedForwardDecoder(GraphDecoder):
         :param n_blocks: number of blocks in the decoder
         :type n_blocks: int
         """
-        # TODO: test this
         super().__init__()
 
         # Store parameter attributes
@@ -116,7 +115,6 @@ class PointwiseFeedForwardDecoder(GraphDecoder):
                 the logistic sigmoid function to the output.
                 (default: :obj:`True`)
         """
-        # TODO: test this
 
         # Apply point-wise FFN blocks
         for block in self.blocks:
@@ -135,7 +133,6 @@ class PointwiseFeedForwardDecoder(GraphDecoder):
                 the logistic sigmoid function to the output.
                 (default: :obj:`True`)
         """
-        # TODO: test this
         # Apply point-wise FFN blocks
         for block in self.blocks:
             z = block(z, add_norm=True)
