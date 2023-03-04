@@ -215,13 +215,13 @@ def train_step_vgae(model: VGAEv2, train_data: DataLoader, optimizer, device, us
 
         # Encoder output
         if use_edge_weight and use_edge_attr:
-            z = model.encode(data.x.float(), data.edge_index, edge_attr=data.edge_attr, edge_weight=data.edge_weight)
+            z = model.encode(data.x, data.edge_index, edge_attr=data.edge_attr, edge_weight=data.edge_weight)
         elif use_edge_attr:
-            z = model.encode(data.x.float(), data.edge_index, edge_attr=data.edge_attr)
+            z = model.encode(data.x, data.edge_index, edge_attr=data.edge_attr)
         elif use_edge_weight:
-            z = model.encode(data.x.float(), data.edge_index, edge_weight=data.edge_weight)
+            z = model.encode(data.x, data.edge_index, edge_weight=data.edge_weight)
         else:
-            z = model.encode(data.x.float(), data.edge_index)
+            z = model.encode(data.x, data.edge_index)
 
         loss = model.recon_loss(z, data.edge_index)  # reconstruction loss
         kl_divergence_loss = (1 / data.num_nodes) * model.kl_loss()  # KL-divergence loss, should work as mean on nodes
@@ -254,13 +254,13 @@ def test_step_vgae(model: VGAEv2, val_data: DataLoader, device, use_edge_weight:
 
         # Encoder output
         if use_edge_weight and use_edge_attr:
-            z = model.encode(data.x.float(), data.edge_index, edge_attr=data.edge_attr, edge_weight=data.edge_weight)
+            z = model.encode(data.x, data.edge_index, edge_attr=data.edge_attr, edge_weight=data.edge_weight)
         elif use_edge_attr:
-            z = model.encode(data.x.float(), data.edge_index, edge_attr=data.edge_attr)
+            z = model.encode(data.x, data.edge_index, edge_attr=data.edge_attr)
         elif use_edge_weight:
-            z = model.encode(data.x.float(), data.edge_index, edge_weight=data.edge_weight)
+            z = model.encode(data.x, data.edge_index, edge_weight=data.edge_weight)
         else:
-            z = model.encode(data.x.float(), data.edge_index)
+            z = model.encode(data.x, data.edge_index)
 
         loss = model.recon_loss(z, data.edge_index)  # reconstruction loss
         kl_divergence_loss = (1 / data.num_nodes) * model.kl_loss()  # KL-divergence loss, should work as mean on nodes
