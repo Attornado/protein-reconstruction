@@ -13,7 +13,7 @@ from preprocessing.dataset import load_dataset
 
 BATCH_SIZE: final = 500
 EPOCHS: final = 100
-EXPERIMENT_NAME: final = 'dgi_rev_gat_test7'
+EXPERIMENT_NAME: final = 'dgi_rev_gat_test8'
 EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "pretraining", "dgi")
 RESTORE_CHECKPOINT: final = True
 
@@ -94,7 +94,7 @@ def main():
         out_channels=100,
         num_convs=60,
         dropout=0.1,  # was 0
-        heads=4,
+        heads=5,  # was 4
         concat=False,
         num_groups=25
     )

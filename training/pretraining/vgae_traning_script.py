@@ -13,10 +13,11 @@ import torchinfo
 from training.training_tools import EARLY_STOP_PATIENCE
 
 
-BATCH_SIZE: final = 500
+BATCH_SIZE: final = 200
 EPOCHS: final = 250
-EXPERIMENT_NAME: final = 'vgae_rev_gcn_test11'
+EXPERIMENT_NAME: final = 'vgae_rev_gcn_test17'
 EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "pretraining", "vgae")
+RESTORE_CHECKPOINT: final = True
 
 
 def main():
@@ -31,6 +32,23 @@ def main():
     in_channels = 10
 
     """
+    encoder = RevGCNEncoder(
+        in_channels=in_channels,
+        hidden_channels=30,
+        out_channels=30,
+        num_convs=50,
+        improved=True,
+        dropout=0.0,
+        num_groups=10,
+        normalize_hidden=True
+    )
+
+    encoder_mu = GCNConvBlock(
+        in_channels=30,
+        out_channels=30,
+        improved=True
+    )
+    
     encoder = ResGCN2ConvEncoder(
         in_channels=in_channels,
         hidden_channels=10,
@@ -61,62 +79,80 @@ def main():
         normalize_hidden=True
     )
 
+    encoder = RevSAGEConvEncoder(
+        in_channels=in_channels,
+        hidden_channels=100,
+        out_channels=100,
+        num_convs=60,
+        dropout=0.0,
+        project=False,
+        root_weight=True,
+        aggr="mean",
+        num_groups=5,
+        normalize_hidden=True
+    )
+
     encoder_mu = SAGEConvBlock(
-        in_channels=40,
-        out_channels=40,
+        in_channels=100,
+        out_channels=100,
         project=False,
         root_weight=True,
         aggr="mean"
     )
-    
-     encoder = RevSAGEConvEncoder(
-        in_channels=in_channels,
-        hidden_channels=10,
-        out_channels=10,
-        num_convs=20,
-        dropout=0.0,
-        num_groups=2
-    )   
-    
     encoder = RevGATConvEncoder(
         in_channels=in_channels,
-        hidden_channels=30,
-        out_channels=30,
-        num_convs=50,
-        dropout=0.0,
-        heads=4,
+        hidden_channels=100,
+        out_channels=100,
+        num_convs=60,
+        dropout=0.1,
+        heads=5,
         concat=False,
-        num_groups=10
+        num_groups=5  # was 10, remember to change to 5 on the next experiment (14)
     )
-    
+
     encoder_mu = GATConvBlock(
-        in_channels=30,
-        out_channels=30,
-        heads=4
+        in_channels=100,
+        out_channels=100,
+        heads=5
     )
     """
 
     encoder = RevGCNEncoder(
         in_channels=in_channels,
-        hidden_channels=30,
-        out_channels=30,
-        num_convs=50,
+        hidden_channels=100,
+        out_channels=100,
+        num_convs=60,
         improved=True,
-        dropout=0.0,
-        num_groups=10,
+        dropout=0.1,
+        num_groups=5,
         normalize_hidden=True
     )
 
     encoder_mu = GCNConvBlock(
-        in_channels=30,
-        out_channels=30,
+        in_channels=100,
+        out_channels=100,
         improved=True
     )
 
     vgencoder = VGEncoder(shared_encoder=encoder, encoder_mu=encoder_mu)
     vgae = VGAEv2(encoder=vgencoder)
+
+    full_experiment_path = os.path.join(EXPERIMENT_PATH, EXPERIMENT_NAME)
+    checkpoint_path = os.path.join(full_experiment_path, "checkpoint.pt")
+    full_state_dict_path = os.path.join(full_experiment_path, "state_dict.pt")
+    if RESTORE_CHECKPOINT and os.path.exists(checkpoint_path):
+        print("Checkpoint found, loading state dict from checkpoint...")
+        state_dict = torch.load(checkpoint_path)
+        vgae.load_state_dict(state_dict)
+        print("State dict loaded.")
+    elif RESTORE_CHECKPOINT and os.path.exists(full_state_dict_path):
+        print("Final state dict found, loading state dict...")
+        state_dict = torch.load(full_state_dict_path)
+        vgae.load_state_dict(state_dict)
+        print("State dict loaded.")
+
     print(vgae)
-    print(torchinfo.summary(vgae))
+    print(torchinfo.summary(vgae, depth=5))
 
     optimizer = Adam(vgae.parameters(), lr=0.1, weight_decay=5e-4)
     optimizer = Adadelta(vgae.parameters())

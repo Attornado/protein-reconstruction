@@ -232,8 +232,9 @@ def train_step_vgae(model: VGAEv2, train_data: DataLoader, optimizer, device, us
 
         # Update running average loss
         running_loss = running_loss + 1 / steps * (loss.item() - running_loss)
-        steps += 1
+
         print(f"Steps: {steps}/{len(train_data)}, running loss {running_loss}")
+        steps += 1
 
     return float(running_loss)
 

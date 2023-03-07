@@ -482,8 +482,8 @@ def train_step_DGI(model: DeepGraphInfomaxV2, train_data: DataLoader, optimizer,
 
         # Update running average loss
         running_loss = running_loss + 1 / steps * (loss.item() - running_loss)
-        steps += 1
         print(f"Steps: {steps}/{len(train_data)}, running loss {running_loss}")
+        steps += 1
 
     return float(running_loss)
 
