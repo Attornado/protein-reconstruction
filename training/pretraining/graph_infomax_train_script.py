@@ -12,8 +12,9 @@ from preprocessing.dataset import load_dataset
 
 
 BATCH_SIZE: final = 500
-EPOCHS: final = 100
-EXPERIMENT_NAME: final = 'dgi_rev_gat_test8'
+EPOCHS: final = 150
+EARLY_STOPPING_PATIENCE: final = 20
+EXPERIMENT_NAME: final = 'dgi_rev_gcn_test11'
 EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "pretraining", "dgi")
 RESTORE_CHECKPOINT: final = True
 
@@ -61,14 +62,18 @@ def main():
         normalize_hidden=True
     )
     
-     encoder = RevSAGEConvEncoder(
+    encoder = RevSAGEConvEncoder(
         in_channels=in_channels,
-        hidden_channels=10,
-        out_channels=10,
-        num_convs=20,
-        dropout=0.0,
-        num_groups=2
-    )   
+        hidden_channels=100,
+        out_channels=100,
+        num_convs=60,
+        dropout=0.1,
+        project=False,
+        root_weight=True,
+        aggr="mean",
+        num_groups=5,
+        normalize_hidden=True
+    )
     
     encoder = RevGATConvEncoder(
         in_channels=in_channels,
@@ -81,6 +86,17 @@ def main():
         num_groups=10
     )
     
+    encoder = RevGATConvEncoder(
+        in_channels=in_channels,
+        hidden_channels=100,
+        out_channels=100,
+        num_convs=60,
+        dropout=0.1,
+        heads=5,
+        concat=False,
+        num_groups=5
+    )
+    
     encoder_mu = GATConvBlock(
         in_channels=30,
         out_channels=30,
@@ -88,15 +104,15 @@ def main():
     )
     """
 
-    encoder = RevGATConvEncoder(
+    encoder = RevGCNEncoder(
         in_channels=in_channels,
         hidden_channels=100,
         out_channels=100,
         num_convs=60,
-        dropout=0.1,  # was 0
-        heads=5,  # was 4
-        concat=False,
-        num_groups=25
+        improved=False,
+        dropout=0.1,
+        num_groups=10,
+        normalize_hidden=True
     )
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -139,7 +155,7 @@ def main():
         optimizer=optimizer,
         experiment_path=EXPERIMENT_PATH,
         experiment_name=EXPERIMENT_NAME,
-        early_stopping_patience=20
+        early_stopping_patience=EARLY_STOPPING_PATIENCE
     )
 
     constructor_params = model.serialize_constructor_params()
