@@ -15,6 +15,7 @@ from training.training_tools import EARLY_STOP_PATIENCE
 
 BATCH_SIZE: final = 200
 EPOCHS: final = 250
+EARLY_STOPPING_PATIENCE: final = 30
 EXPERIMENT_NAME: final = 'vgae_rev_gcn_test17'
 EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "pretraining", "vgae")
 RESTORE_CHECKPOINT: final = True
@@ -164,7 +165,7 @@ def main():
         optimizer=optimizer,
         experiment_path=EXPERIMENT_PATH,
         experiment_name=EXPERIMENT_NAME,
-        early_stopping_patience=30
+        early_stopping_patience=EARLY_STOPPING_PATIENCE
     )
 
     full_experiment_path = os.path.join(EXPERIMENT_PATH, EXPERIMENT_NAME)

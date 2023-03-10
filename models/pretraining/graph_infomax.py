@@ -593,7 +593,7 @@ def train_DGI(model: DeepGraphInfomaxV2, train_data: DataLoader, val_data: DataL
             'Epoch: {:d}, Train loss: {:.4f}, Validation loss {:.4f}, '
             'Average accuracy: {:.4f}, Average precision: {:.4f}, Average recall: {:.4f}, Average F1: {:.4f}, '
             .format(
-                epoch,
+                epoch + 1,
                 train_loss,
                 val_loss,
                 avg_accuracy,
