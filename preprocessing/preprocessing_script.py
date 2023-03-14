@@ -1,5 +1,7 @@
 import os
 import shutil
+
+import numpy as np
 from torch_geometric.loader import DataLoader
 from preprocessing.constants import PSCDB_PATH, PSCDB_CLEANED_TRAIN, PRETRAIN_CLEANED_TRAIN, PATH_PDBS_JSON, \
     PRETRAIN_CLEANED_VAL, PRETRAIN_CLEANED_TEST, PSCDB_CLEANED_VAL, PSCDB_CLEANED_TEST, \
@@ -96,17 +98,45 @@ def main():
     print(next(iter(dl)))
 
     # Create data loader to check if everything's ok
-    dl = DataLoader(ds_cl_train, batch_size=2, shuffle=True, drop_last=True)
+    dl = DataLoader(ds_cl_train, batch_size=1, shuffle=True, drop_last=True)
+    min_n = 1000000000
+    max_n = 0
+    n_nodes = []
+    for el in iter(dl):
+        if el.num_nodes < min_n:
+            min_n = el.num_nodes
+        if el.num_nodes > max_n:
+            max_n = el.num_nodes
+        n_nodes.append(el.num_nodes)
     print(len(dl))
     print(next(iter(dl)))
 
     # Create data loader to check if everything's ok
-    dl = DataLoader(ds_cl_val, batch_size=2, shuffle=True, drop_last=True)
+    dl = DataLoader(ds_cl_val, batch_size=1, shuffle=True, drop_last=True)
+    for el in iter(dl):
+        if el.num_nodes < min_n:
+            min_n = el.num_nodes
+        if el.num_nodes > max_n:
+            max_n = el.num_nodes
+        n_nodes.append(el.num_nodes)
     print(len(dl))
     print(next(iter(dl)))
 
     # Create data loader to check if everything's ok
-    dl = DataLoader(ds_cl_test, batch_size=2, shuffle=True, drop_last=True)
+    dl = DataLoader(ds_cl_test, batch_size=1, shuffle=True, drop_last=True)
+    for el in iter(dl):
+        if el.num_nodes < min_n:
+            min_n = el.num_nodes
+            print(min_n)
+        if el.num_nodes > max_n:
+            max_n = el.num_nodes
+        n_nodes.append(el.num_nodes)
+
+    print(f"Min is: {min_n}")
+    print(f"Max is: {max_n}")
+    print(f"Median is: {np.median(n_nodes)}")
+    print(f"Mean is: {np.mean(n_nodes)}")
+    print(f"Quantiles: {np.quantile(n_nodes, q=[0, 0.25, 0.5, 0.75, 1])}")
     print(len(dl))
     print(next(iter(dl)))
 
