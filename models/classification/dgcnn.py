@@ -1,162 +1,166 @@
-import abc
+# This implementation is based on the one from the repository:
+# https://github.com/diningphil/gnn-comparison, all rights reserved to authors and contributors.
+# Copyright (C)  2020  University of Pisa
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
 import os
-from abc import abstractmethod, abstractproperty
 from typing import Callable, Optional
 import torch
-from torch.nn import CrossEntropyLoss
+from torch import nn, Tensor
+from torch.nn import functional as F, CrossEntropyLoss
 from torch.utils.tensorboard import SummaryWriter
 from torch_geometric.loader import DataLoader
+from torch_geometric.nn.conv import MessagePassing
+from torch_geometric.nn.aggr import SortAggregation
+from torch_geometric.utils import add_self_loops, degree
 from torchmetrics.functional import accuracy, precision, recall, f1_score
+
+from models.classification.classifiers import GraphClassifier
 from models.layers import SerializableModule
-from training.training_tools import EarlyStopping, MetricsHistoryTracer, FIGURE_SIZE_DEFAULT, EARLY_STOP_PATIENCE
+from training.training_tools import FIGURE_SIZE_DEFAULT, MetricsHistoryTracer, EarlyStopping, EARLY_STOP_PATIENCE
 
 
-class ClassificationLoss(torch.nn.Module, abc.ABC):
-    def __init__(self):
-        super().__init__()
-        self.loss: Optional[Callable] = None
+class DGCNN(GraphClassifier):
+    """
+    Uses fixed architecture
+    """
 
-    def forward(self, targets: torch.Tensor, *outputs: torch.Tensor) -> torch.Tensor:
-        """
-        :param targets: labels
-        :param outputs: predictions
-        :return: loss value
-        """
-        outputs = outputs[0]
-        loss = self.loss(outputs, targets)
-        return loss
+    def __init__(self, dim_features, dim_target, config):
+        super(DGCNN, self).__init__(dim_features, dim_target, config)
 
-    def get_accuracy(self, targets: torch.Tensor, *outputs: torch.Tensor) -> float:
-        outputs: torch.Tensor = outputs[0]
-        acc = self._calculate_accuracy(outputs, targets)
-        return acc
-
-    @abstractmethod
-    def _get_correct(self, outputs):
-        raise NotImplementedError()
-
-    def _calculate_accuracy(self, outputs: torch.Tensor, targets: torch.Tensor) -> float:
-        correct = self._get_correct(outputs)
-        return float(100. * (correct == targets).sum().float() / targets.size(0))
-
-
-class MulticlassClassificationLoss(ClassificationLoss):
-    def __init__(self, reduction=None):
-        super().__init__()
-        if reduction is not None:
-            self.loss = torch.nn.CrossEntropyLoss(reduction=reduction)
-        else:
-            self.loss = torch.nn.CrossEntropyLoss()
-
-    def _get_correct(self, outputs):
-        return torch.argmax(outputs, dim=1)
-
-
-class GraphClassifier(SerializableModule):
-    def __init__(self, dim_features: int, dim_target: int, config: dict):
-        super(GraphClassifier, self).__init__()
-        self.__in_channels: int = dim_features
-        self.__dim_target: int = dim_target
-        self.__config_dict: dict = config
-
-    @property
-    def in_channels(self) -> int:
-        return self.__in_channels
-
-    @in_channels.setter
-    def in_channels(self, in_channels: int):
-        self.__in_channels = in_channels
-
-    @property
-    def dim_target(self) -> int:
-        return self.__dim_target
-
-    @dim_target.setter
-    def dim_target(self, dim_target: int):
-        self.__dim_target = dim_target
-
-    @property
-    def config_dict(self) -> dict:
-        return self.__config_dict
-
-    @config_dict.setter
-    def config_dict(self, config_dict: dict):
-        self.__config_dict = config_dict
-
-    def test(self, x: torch.Tensor, edge_index: torch.Tensor, y, batch_index: torch.Tensor = None,
-             criterion: ClassificationLoss = MulticlassClassificationLoss(), top_k: Optional[int] = None,
-             *args, **kwargs) -> (float, Optional[float], float, float, float, float):
-        """
-        This function takes in a graph, and returns the loss, accuracy, top-k accuracy, precision, recall, and F1-score.
-
-        :param x: torch.Tensor = The node features
-        :type x: torch.Tensor
-        :param edge_index: The edge indices of the graph
-        :type edge_index: torch.Tensor
-        :param y: The target labels
-        :param batch_index: The batch index of the nodes
-        :type batch_index: torch.Tensor
-        :param criterion: The loss function to use
-        :type criterion: Callable
-        :param top_k: k for computing top_k accuracy, *args, **kwargs
-        :type top_k: Optional[int]
-        :return: The loss, accuracy, top-k accuracy, precision, recall, and F1-score.
-        """
-
-        # Get the number of classes
-        n_classes = self.dim_target
-
-        # Get predictions
-        y_hat = self(x, edge_index, batch_index, *args, **kwargs)
-
-        # Compute loss
-        loss = self.loss(y_hat=y_hat, y=y, criterion=criterion)
-
-        # Compute the metrics
-        acc = accuracy(preds=y_hat, target=y, task='multiclass', num_classes=n_classes)
-        if top_k is not None:
-            top_k_acc = float(accuracy(preds=y_hat, target=y, task='multiclass', num_classes=n_classes, top_k=top_k))
-        else:
-            top_k_acc = None
-        prec = precision(preds=y_hat, target=y, task='multiclass', num_classes=n_classes, average="weighted")
-        rec = recall(preds=y_hat, target=y, task='multiclass', num_classes=n_classes, average="weighted")
-        f1 = f1_score(preds=y_hat, target=y, task='multiclass', num_classes=n_classes, average="weighted")
-
-        return float(loss), float(acc), top_k_acc, prec, rec, f1
-
-    def loss(self, y, x: Optional[torch.Tensor] = None, edge_index: Optional[torch.Tensor] = None,
-             batch_index: Optional[torch.Tensor] = None, y_hat: Optional[torch.Tensor] = None,
-             criterion: ClassificationLoss = MulticlassClassificationLoss(),
-             additional_terms: list[torch.Tensor] = None, *args, **kwargs) -> torch.Tensor:
-
-        # If predictions are not given, compute them using the model
-        if y_hat is None:
-            y_hat = self(x, edge_index, batch_index, *args, **kwargs)
-
-        # Compute loss with given criterion
-        loss = criterion(y, y_hat)
-
-        # Add pre-computed additional loss terms to the loss
-        if additional_terms is not None:
-            for additional_term in additional_terms:
-                loss = loss + additional_term
-
-        return loss
-
-    @abstractmethod
-    def forward(self, x, edge_index, batch):
-        raise NotImplementedError(f"Each {self.__class__} class has to implement the forward() method")
-
-    def serialize_constructor_params(self, *args, **kwargs) -> dict:
-        return {
-            "dim_features": self.in_channels,
-            "dim_target": self.dim_target,
-            "config": self.config_dict
+        self.ks = {
+            'NCI1': {'0.6': 30, '0.9': 46},
+            'PROTEINS_full': {'0.6': 32, '0.9': 81},
+            'DD': {'0.6': 291, '0.9': 503},
+            'ENZYMES': {'0.6': 36, '0.9': 48},
+            'IMDB-BINARY': {'0.6': 18, '0.9': 31},
+            'IMDB-MULTI': {'0.6': 11, '0.9': 22},
+            'REDDIT-BINARY': {'0.6': 370, '0.9': 1002},
+            'REDDIT-MULTI-5K': {'0.6': 469, '0.9': 1081},
+            'COLLAB': {'0.6': 61, '0.9': 130},
+            'PSCDB': {'0.6': 327, '0.9': 492}
         }
 
+        self.k = self.ks[config['dataset']][str(config['k'])]
+        self.embedding_dim = config['embedding_dim']
+        self.num_layers = config['num_layers']
 
-def train_step_classifier(model: GraphClassifier, train_data: DataLoader, optimizer, device: torch.device,
-                          criterion: ClassificationLoss = MulticlassClassificationLoss()):
+        self.convs = []
+        for layer in range(self.num_layers):
+            input_dim = dim_features if layer == 0 else self.embedding_dim
+            self.convs.append(DGCNNConv(input_dim, self.embedding_dim))
+        self.total_latent_dim = self.num_layers * self.embedding_dim
+
+        # Add last embedding
+        self.convs.append(DGCNNConv(self.embedding_dim, 1))
+        self.total_latent_dim += 1
+
+        self.convs = nn.ModuleList(self.convs)
+
+        # should we leave this fixed?
+        self.conv1d_params1 = nn.Conv1d(1, 16, self.total_latent_dim, self.total_latent_dim)
+        self.maxpool1d = nn.MaxPool1d(2, 2)
+        self.global_sort_pool = SortAggregation(k=self.k)
+        self.conv1d_params2 = nn.Conv1d(16, 32, 5, 1)
+
+        dense_dim = int((self.k - 2) / 2 + 1)
+        self.input_dense_dim = (dense_dim - 5 + 1) * 32
+
+        self.hidden_dense_dim = config['dense_dim']
+        self.dense_layer = nn.Sequential(nn.Linear(self.input_dense_dim, self.hidden_dense_dim),
+                                         nn.ReLU(),
+                                         nn.Dropout(p=0.5),
+                                         nn.Linear(self.hidden_dense_dim, dim_target))
+
+    def forward(self, x, edge_index, batch):
+        # Implement Equation 4.2 of the paper i.e. concat all layers' graph representations and apply linear model
+        # note: this can be decomposed in one smaller linear model per layer
+        # x, edge_index, batch = data.x, data.edge_index, data.batch
+
+        hidden_repres = []
+
+        for conv in self.convs:
+            x = torch.tanh(conv(x, edge_index))
+            hidden_repres.append(x)
+
+        # apply sortpool
+        x_to_sortpool = torch.cat(hidden_repres, dim=1)
+        x_1d = self.global_sort_pool(x_to_sortpool, batch)  # in the code the authors sort the last channel only
+
+        # apply 1D convolutional layers
+        x_1d = torch.unsqueeze(x_1d, dim=1)
+        conv1d_res = F.relu(self.conv1d_params1(x_1d))
+        conv1d_res = self.maxpool1d(conv1d_res)
+        conv1d_res = F.relu(self.conv1d_params2(conv1d_res))
+        conv1d_res = conv1d_res.reshape(conv1d_res.shape[0], -1)
+
+        # apply dense layer
+        out_dense = self.dense_layer(conv1d_res)
+        return out_dense
+
+
+# noinspection PyAbstractClass
+class DGCNNConv(MessagePassing):
+    """
+    Extended from tutorial on GCNs of Pytorch Geometrics
+    """
+
+    def __init__(self, in_channels, out_channels):
+        super(DGCNNConv, self).__init__(aggr='add')  # "Add" aggregation.
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.lin = nn.Linear(in_channels, out_channels)
+
+    def forward(self, x, edge_index):
+        # x has shape [N, in_channels]
+        # edge_index has shape [2, E]
+
+        # Step 1: Add self-loops to the adjacency matrix.
+        edge_index, _ = add_self_loops(edge_index, num_nodes=x.size(0))
+
+        # Step 2: Linearly transform node feature matrix.
+        x = self.lin(x)
+
+        # Step 3-5: Start propagating messages.
+        return self.propagate(edge_index, size=(x.size(0), x.size(0)), x=x)
+
+    # noinspection PyMethodOverriding
+    def message(self, x_j: torch.Tensor, edge_index, size) -> torch.Tensor:
+        # x_j has shape [E, out_channels]-15
+
+        # Step 3: Normalize node features.
+        src, dst = edge_index  # we assume source_to_target message passing
+        deg = degree(src, size[0], dtype=x_j.dtype)
+        deg = deg.pow(-1)
+        norm = deg[dst]
+
+        return norm.view(-1, 1) * x_j  # broadcasting the normalization term to all out_channels === hidden features
+
+    def update(self, aggr_out):
+        # aggr_out has shape [N, out_channels]
+
+        # Step 5: Return new node embeddings.
+        return aggr_out
+
+    def __repr__(self):
+        return '{}({}, {})'.format(self.__class__.__name__, self.in_channels,
+                                   self.out_channels)
+
+
+"""def train_step_classifier(model: DGCNN, train_data: DataLoader, optimizer, device: torch.device,
+                          criterion: Callable = CrossEntropyLoss()):
     # TODO: test this
     # Put the model in training mode
     model.train()
@@ -190,9 +194,9 @@ def train_step_classifier(model: GraphClassifier, train_data: DataLoader, optimi
 
 
 @torch.no_grad()
-def test_step_classifier(model: GraphClassifier, val_data: DataLoader, device: torch.device,
+def test_step_classifier(model: DGCNN, val_data: DataLoader, device: torch.device,
                          use_edge_weight: bool = False, use_edge_attr: bool = False, top_k: int = 3,
-                         criterion: ClassificationLoss = MulticlassClassificationLoss()):
+                         criterion: Callable = CrossEntropyLoss()):
     # TODO: test this
     # put the model in evaluation mode
     model.eval()
@@ -239,10 +243,10 @@ def test_step_classifier(model: GraphClassifier, val_data: DataLoader, device: t
         float(running_f1), float(running_val_loss)
 
 
-def train_classifier(model: GraphClassifier, train_data: DataLoader, val_data: DataLoader, epochs: int, optimizer,
-                     experiment_path: str, experiment_name: str, early_stopping_patience: int = EARLY_STOP_PATIENCE,
-                     early_stopping_delta: float = 0, top_k: int = 3,
-                     criterion: ClassificationLoss = MulticlassClassificationLoss()) -> torch.nn.Module:
+def train_dgcnn(model: DGCNN, train_data: DataLoader, val_data: DataLoader, epochs: int, optimizer,
+                experiment_path: str, experiment_name: str, early_stopping_patience: int = EARLY_STOP_PATIENCE,
+                early_stopping_delta: float = 0, top_k: int = 3, criterion: Callable = CrossEntropyLoss()) -> \
+        torch.nn.Module:
     # TODO: test this
     # Move model to device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -283,8 +287,7 @@ def train_classifier(model: GraphClassifier, train_data: DataLoader, val_data: D
             model=model,
             train_data=train_data,
             optimizer=optimizer,
-            device=device,
-            criterion=criterion
+            device=device
         )
 
         # Do validation step
@@ -299,7 +302,7 @@ def train_classifier(model: GraphClassifier, train_data: DataLoader, val_data: D
         print(
             'Epoch: {:d}, Train loss: {:.4f}, Validation loss {:.4f}, Average accuracy: {:.4f}, '
             'Average top-{:d} accuracy: {:.4f}, Average precision: {:.4f}, Average recall: {:.4f}, Average F1: {:.4f}, '
-            .format(epoch + 1, train_loss, val_loss, avg_accuracy, top_k,
+            .format(epoch, train_loss, val_loss, avg_accuracy, top_k,
                     avg_topk_accuracy, avg_precision, avg_recall, avg_f1)
         )
 
@@ -369,4 +372,4 @@ def train_classifier(model: GraphClassifier, train_data: DataLoader, val_data: D
 
     # Load best model
     model.load_state_dict(torch.load(checkpoint_path))
-    return model
+    return model"""
