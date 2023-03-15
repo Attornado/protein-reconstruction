@@ -1,9 +1,9 @@
 import abc
 import os
-from abc import abstractmethod, abstractproperty
+from abc import abstractmethod
 from typing import Callable, Optional
+from log.logger import Logger
 import torch
-from torch.nn import CrossEntropyLoss
 from torch.utils.tensorboard import SummaryWriter
 from torch_geometric.loader import DataLoader
 from torchmetrics.functional import accuracy, precision, recall, f1_score
@@ -156,7 +156,8 @@ class GraphClassifier(SerializableModule):
 
 
 def train_step_classifier(model: GraphClassifier, train_data: DataLoader, optimizer, device: torch.device,
-                          criterion: ClassificationLoss = MulticlassClassificationLoss()):
+                          criterion: ClassificationLoss = MulticlassClassificationLoss(),
+                          logger: Optional[Logger] = None):
     # TODO: test this
     # Put the model in training mode
     model.train()
@@ -183,7 +184,11 @@ def train_step_classifier(model: GraphClassifier, train_data: DataLoader, optimi
 
         # Update running average loss
         running_loss = running_loss + 1 / steps * (loss.item() - running_loss)
-        print(f"Steps: {steps}/{len(train_data)}, running loss {running_loss}")
+
+        if logger is None:
+            print(f"Steps: {steps}/{len(train_data)}, running loss {running_loss}")
+        else:
+            logger.log(f"Steps: {steps}/{len(train_data)}, running loss {running_loss}")
         steps += 1
 
     return float(running_loss)
@@ -241,7 +246,7 @@ def test_step_classifier(model: GraphClassifier, val_data: DataLoader, device: t
 
 def train_classifier(model: GraphClassifier, train_data: DataLoader, val_data: DataLoader, epochs: int, optimizer,
                      experiment_path: str, experiment_name: str, early_stopping_patience: int = EARLY_STOP_PATIENCE,
-                     early_stopping_delta: float = 0, top_k: int = 3,
+                     early_stopping_delta: float = 0, top_k: int = 3, logger: Optional[Logger] = None,
                      criterion: ClassificationLoss = MulticlassClassificationLoss()) -> torch.nn.Module:
     # TODO: test this
     # Move model to device
@@ -284,7 +289,8 @@ def train_classifier(model: GraphClassifier, train_data: DataLoader, val_data: D
             train_data=train_data,
             optimizer=optimizer,
             device=device,
-            criterion=criterion
+            criterion=criterion,
+            logger=None  # do not log epoch statistics to file
         )
 
         # Do validation step
@@ -296,12 +302,22 @@ def train_classifier(model: GraphClassifier, train_data: DataLoader, val_data: D
             criterion=criterion
         )
 
-        print(
-            'Epoch: {:d}, Train loss: {:.4f}, Validation loss {:.4f}, Average accuracy: {:.4f}, '
-            'Average top-{:d} accuracy: {:.4f}, Average precision: {:.4f}, Average recall: {:.4f}, Average F1: {:.4f}, '
-            .format(epoch + 1, train_loss, val_loss, avg_accuracy, top_k,
-                    avg_topk_accuracy, avg_precision, avg_recall, avg_f1)
-        )
+        if logger is None:
+            print(
+                'Epoch: {:d}, Train loss: {:.4f}, Validation loss {:.4f}, Average accuracy: {:.4f}, '
+                'Average top-{:d} accuracy: {:.4f}, Average precision: {:.4f}, Average recall: {:.4f}, '
+                'Average F1: {:.4f}, '
+                .format(epoch + 1, train_loss, val_loss, avg_accuracy, top_k,
+                        avg_topk_accuracy, avg_precision, avg_recall, avg_f1)
+            )
+        else:
+            logger.log(
+                'Epoch: {:d}, Train loss: {:.4f}, Validation loss {:.4f}, Average accuracy: {:.4f}, '
+                'Average top-{:d} accuracy: {:.4f}, Average precision: {:.4f}, Average recall: {:.4f}, '
+                'Average F1: {:.4f}, '
+                .format(epoch + 1, train_loss, val_loss, avg_accuracy, top_k,
+                        avg_topk_accuracy, avg_precision, avg_recall, avg_f1)
+            )
 
         # Tensorboard state update
         writer.add_scalar('train_loss', train_loss, epoch)
@@ -315,7 +331,10 @@ def train_classifier(model: GraphClassifier, train_data: DataLoader, val_data: D
         # Check for early-stopping stuff
         monitor(val_loss, model)
         if monitor.early_stop:
-            print(f"Epoch {epoch}: early stopping, restoring model checkpoint {checkpoint_path}...")
+            if logger is None:
+                print(f"Epoch {epoch}: early stopping, restoring model checkpoint {checkpoint_path}...")
+            else:
+                logger.log(f"Epoch {epoch}: early stopping, restoring model checkpoint {checkpoint_path}...")
             break
 
         # Metrics history update
