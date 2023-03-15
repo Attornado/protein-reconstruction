@@ -2,6 +2,7 @@ import os
 from typing import final
 import torch
 from torch_geometric.loader import DataLoader
+from log.logger import Logger
 from models.classification.dgcnn import DGCNN
 from models.classification.classifiers import train_classifier
 from preprocessing.constants import PSCDB_CLEANED_TRAIN, PSCDB_CLEANED_VAL, PSCDB_CLEANED_TEST, DATA_PATH
@@ -65,6 +66,8 @@ def main():
         optimizer = Adam(dgcnn.parameters(), lr=learning_rate)
     else:
         optimizer = Adadelta(dgcnn.parameters())
+    full_experiment_path = os.path.join(EXPERIMENT_PATH, EXPERIMENT_NAME)
+    logger = Logger(filepath=os.path.join(full_experiment_path, "trainlog.txt"), mode="a")
     model = train_classifier(
         dgcnn,
         train_data=dl_train,
@@ -73,15 +76,15 @@ def main():
         optimizer=optimizer,
         experiment_path=EXPERIMENT_PATH,
         experiment_name=EXPERIMENT_NAME,
-        early_stopping_patience=EARLY_STOPPING_PATIENCE
+        early_stopping_patience=EARLY_STOPPING_PATIENCE,
+        logger=logger
     )
 
-    full_experiment_path = os.path.join(EXPERIMENT_PATH, EXPERIMENT_NAME)
     constructor_params = model.serialize_constructor_params()
     state_dict = model.state_dict()
     torch.save(state_dict, os.path.join(full_experiment_path, "state_dict.pt"))
     torch.save(constructor_params, os.path.join(full_experiment_path, "constructor_params.pt"))
-    print(f"Model trained and stored to {full_experiment_path}.")
+    logger.log(f"Model trained and stored to {full_experiment_path}.")
 
 
 if __name__ == '__main__':

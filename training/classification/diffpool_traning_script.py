@@ -6,14 +6,15 @@ from models.classification.classifiers import train_classifier
 from models.classification.diffpool import DiffPool, DiffPoolMulticlassClassificationLoss
 from preprocessing.constants import PSCDB_CLEANED_TRAIN, PSCDB_CLEANED_VAL, PSCDB_CLEANED_TEST, DATA_PATH
 from preprocessing.dataset import load_dataset
+from log.logger import Logger
 from torch.optim import Adam, Adadelta
 import torchinfo
 
 
 BATCH_SIZE: final = 30
 EPOCHS: final = 3000
-EARLY_STOPPING_PATIENCE: final = 50
-EXPERIMENT_NAME: final = 'diffpool_test1'
+EARLY_STOPPING_PATIENCE: final = 200
+EXPERIMENT_NAME: final = 'diffpool_test3'
 EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "classification", "diffpool")
 RESTORE_CHECKPOINT: final = True
 
@@ -30,7 +31,7 @@ def main():
     in_channels = 10
     n_classes = 7
     l2 = 0.0  # try 5e-4
-    learning_rate = 0.00001  # try 0.0001, 0.001
+    learning_rate = 0.00001  # try 0.00001, 0.0001, 0.001
     optim = "adadelta"
     config = {
         "num_layers": 2,
@@ -65,6 +66,8 @@ def main():
         optimizer = Adam(diffpool.parameters(), lr=learning_rate)
     else:
         optimizer = Adadelta(diffpool.parameters())
+    full_experiment_path = os.path.join(EXPERIMENT_PATH, EXPERIMENT_NAME)
+    logger = Logger(filepath=os.path.join(full_experiment_path, "trainlog.txt"), mode="a")
     model = train_classifier(
         diffpool,
         train_data=dl_train,
@@ -74,15 +77,16 @@ def main():
         experiment_path=EXPERIMENT_PATH,
         experiment_name=EXPERIMENT_NAME,
         early_stopping_patience=EARLY_STOPPING_PATIENCE,
-        criterion=DiffPoolMulticlassClassificationLoss()
+        criterion=DiffPoolMulticlassClassificationLoss(),
+        logger=logger
     )
 
-    full_experiment_path = os.path.join(EXPERIMENT_PATH, EXPERIMENT_NAME)
     constructor_params = model.serialize_constructor_params()
     state_dict = model.state_dict()
     torch.save(state_dict, os.path.join(full_experiment_path, "state_dict.pt"))
     torch.save(constructor_params, os.path.join(full_experiment_path, "constructor_params.pt"))
-    print(f"Model trained and stored to {full_experiment_path}.")
+    logger.log(f"Model trained and stored to {full_experiment_path}.")
+    # print()
 
 
 if __name__ == '__main__':
