@@ -1,7 +1,7 @@
 import abc
 import os
 from abc import abstractmethod
-from typing import Callable, Optional
+from typing import Callable, Optional, Union, Iterable
 from log.logger import Logger
 import torch
 from torch.utils.tensorboard import SummaryWriter
@@ -14,7 +14,7 @@ from training.training_tools import EarlyStopping, MetricsHistoryTracer, FIGURE_
 class ClassificationLoss(torch.nn.Module, abc.ABC):
     def __init__(self):
         super().__init__()
-        self.loss: Optional[Callable] = None
+        self._loss: Optional[Callable] = None
 
     def forward(self, targets: torch.Tensor, *outputs: torch.Tensor) -> torch.Tensor:
         """
@@ -23,7 +23,7 @@ class ClassificationLoss(torch.nn.Module, abc.ABC):
         :return: loss value
         """
         outputs = outputs[0]
-        loss = self.loss(outputs, targets)
+        loss = self._loss(outputs, targets)
         return loss
 
     def get_accuracy(self, targets: torch.Tensor, *outputs: torch.Tensor) -> float:
@@ -41,12 +41,29 @@ class ClassificationLoss(torch.nn.Module, abc.ABC):
 
 
 class MulticlassClassificationLoss(ClassificationLoss):
-    def __init__(self, reduction=None):
+    def __init__(self, weights: Optional[Union[torch.Tensor, Iterable]] = None, reduction: Optional[str] = None):
         super().__init__()
-        if reduction is not None:
-            self.loss = torch.nn.CrossEntropyLoss(reduction=reduction)
+
+        if weights is None or isinstance(weights, torch.Tensor):
+            self.__weights: Optional[torch.Tensor] = weights
         else:
-            self.loss = torch.nn.CrossEntropyLoss()
+            self.__weights: Optional[torch.Tensor] = torch.tensor(weights)
+
+        if reduction is not None:
+            self._loss: torch.nn.CrossEntropyLoss = torch.nn.CrossEntropyLoss(reduction=reduction)
+        else:
+            self._loss: torch.nn.CrossEntropyLoss = torch.nn.CrossEntropyLoss()
+
+    @property
+    def weights(self) -> Optional[torch.Tensor]:
+        return self.__weights
+
+    @weights.setter
+    def weights(self, weights: Optional[Union[torch.Tensor, Iterable]]):
+        if weights is None or isinstance(weights, torch.Tensor):
+            self.__weights: Optional[torch.Tensor] = weights
+        else:
+            self.__weights: Optional[torch.Tensor] = torch.tensor(weights)
 
     def _get_correct(self, outputs):
         return torch.argmax(outputs, dim=1)
