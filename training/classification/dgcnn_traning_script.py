@@ -4,7 +4,7 @@ import torch
 from torch_geometric.loader import DataLoader
 from log.logger import Logger
 from models.classification.dgcnn import DGCNN
-from models.classification.classifiers import train_classifier
+from models.classification.classifiers import train_classifier, MulticlassClassificationLoss
 from preprocessing.constants import PSCDB_CLEANED_TRAIN, PSCDB_CLEANED_VAL, PSCDB_CLEANED_TEST, DATA_PATH
 from preprocessing.dataset import load_dataset
 from torch.optim import Adam, Adadelta
@@ -77,6 +77,7 @@ def main():
         experiment_path=EXPERIMENT_PATH,
         experiment_name=EXPERIMENT_NAME,
         early_stopping_patience=EARLY_STOPPING_PATIENCE,
+        criterion=MulticlassClassificationLoss(),
         logger=logger
     )
 

@@ -230,5 +230,5 @@ class DiffPoolMulticlassClassificationLoss(MulticlassClassificationLoss):
         if targets.dim() > 1 and targets.size(1) == 1:
             targets = targets.squeeze(1)
 
-        loss = self.loss(preds, targets)
+        loss = self._loss(preds, targets)
         return loss + lp_loss + ent_loss

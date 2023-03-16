@@ -1,10 +1,11 @@
 import collections
 import json
 import os
-from typing import Union, List
+from typing import Union, List, Optional
 import pandas as pd
 from preprocessing.constants import UNIPROTS_KEY, PDBS_KEY, USED_COLUMNS, RANDOM_SEED, TEST_SIZE_PSCDB, \
-    VAL_SIZE_PSCDB, PDB, PATHS_KEY
+    VAL_SIZE_PSCDB, PDB, PATHS_KEY, MOTION_COLUMN, FREE_PDB_COLUMN, MOTION_TYPE, OTHER_MOTION_TYPE, \
+    OTHER_MOTION_COLUMN_NAMES
 from sklearn.model_selection import train_test_split
 
 
@@ -38,7 +39,7 @@ def pscdb_read(path: str, drop_duplicate_pdb_codes: bool = True) -> pd.DataFrame
     :type drop_duplicate_pdb_codes: bool
     :return: A dataframe corresponding to the PSCDB dataset.
     """
-    df = pd.read_csv(path)
+    df = pd.read_csv(path, index_col=False)
     df = df.drop(df.columns.difference(USED_COLUMNS.keys()), axis=1)
     df = df.rename(columns=USED_COLUMNS)
 
@@ -58,7 +59,7 @@ def get_unique_pdbs(pscdb: pd.DataFrame) -> pd.DataFrame:
 
     :return: the pscdb dataframe without duplicate PDB codes.
     """
-    return pscdb.drop_duplicates(subset=[PDB])
+    return pscdb.drop_duplicates(subset=[PDB], keep="first")
 
 
 def get_pdb_paths_pscdb(pscdb: pd.DataFrame, root_path: str) -> List[str]:
@@ -91,7 +92,9 @@ def train_test_validation_split(dataset: Union[pd.DataFrame, List[str]], val_siz
     :type test_size: float
     :param random_seed: The random seed to use for the split
     :type random_seed: int
-    :return: A tuple of three dataframes.
+
+    :return: A tuple of three dataframes, representing the train, validation and test sets, respectively.
+    :rtype: tuple[Union[pd.DataFrame, List[str]], Union[pd.DataFrame, List[str]], Union[pd.DataFrame, List[str]]]
     """
 
     if type(dataset) == list:
@@ -153,3 +156,45 @@ class FrozenDict(collections.Mapping):
                 hash_ ^= hash(pair)
             self._hash = hash_
         return self._hash
+
+
+def read_others_original_format(path: str, val_size: Optional[float] = None, test_size: Optional[float] = None,
+                                random_seed: int = RANDOM_SEED, split_from_others_only: bool = True) -> \
+        Union[pd.DataFrame, tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]]:
+
+    # Read csv containing "other_motion" structures
+    df = pd.read_csv(path, index_col=False)
+
+    # If complete pscdb data in original format is given, then remove it all except from the "other_motion" proteins
+    if not split_from_others_only:
+        sub_dfs: list[pd.DataFrame] = []
+        for name in OTHER_MOTION_COLUMN_NAMES:
+            sub_dfs.append(df[df[MOTION_COLUMN] == name].drop_duplicates(subset=[FREE_PDB_COLUMN]))
+        df = pd.concat(sub_dfs)
+
+    # Drop all columns besides PDB and motion type ones
+    df = df.drop(df.columns.difference([FREE_PDB_COLUMN, MOTION_COLUMN]), axis=1)
+    df = df.drop_duplicates(subset=[FREE_PDB_COLUMN])
+
+    # Rename columns according to our format
+    column_renaming = {
+        FREE_PDB_COLUMN: PDB,
+        MOTION_COLUMN: MOTION_TYPE
+    }
+    df = df.rename(columns=column_renaming)
+
+    # Replace <PDBcode>_<chains> with <PDBcode>
+    df.loc[:, PDB] = df[PDB].apply(lambda free_pdb_id: free_pdb_id.split("_")[0].strip())
+    df.loc[:, MOTION_TYPE] = OTHER_MOTION_TYPE
+
+    # Perform train/validation/test split if sizes are given
+    if val_size is None and test_size is None:
+        return df
+    else:
+        if val_size is None:
+            val_size = test_size
+        elif test_size is None:
+            test_size = val_size
+        train_df, val_df, test_df = train_test_validation_split(df, val_size=val_size, test_size=test_size,
+                                                                random_seed=random_seed)
+        return train_df, val_df, test_df
