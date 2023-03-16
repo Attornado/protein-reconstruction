@@ -5,7 +5,8 @@ from torch_geometric.loader import DataLoader
 from log.logger import Logger
 from models.classification.dgcnn import DGCNN
 from models.classification.classifiers import train_classifier, MulticlassClassificationLoss
-from preprocessing.constants import PSCDB_CLEANED_TRAIN, PSCDB_CLEANED_VAL, PSCDB_CLEANED_TEST, DATA_PATH
+from preprocessing.constants import PSCDB_CLEANED_TRAIN, PSCDB_CLEANED_VAL, PSCDB_CLEANED_TEST, DATA_PATH, \
+    PSCDB_CLASS_WEIGHTS
 from preprocessing.dataset import load_dataset
 from torch.optim import Adam, Adadelta
 import torchinfo
@@ -14,9 +15,11 @@ import torchinfo
 BATCH_SIZE: final = 200
 EPOCHS: final = 1000
 EARLY_STOPPING_PATIENCE: final = 50
-EXPERIMENT_NAME: final = 'dgcnn_test5'
+EXPERIMENT_NAME: final = 'dgcnn_test6'
 EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "classification", "dgcnn")
 RESTORE_CHECKPOINT: final = True
+USE_CLASS_WEIGHTS: final = True
+LABEL_SMOOTHING: final = 0.0
 
 
 def main():
@@ -28,8 +31,9 @@ def main():
     dl_val = DataLoader(ds_val, batch_size=BATCH_SIZE, shuffle=True)
     # dl_test = DataLoader(ds_test, batch_size=BATCH_SIZE, shuffle=True)
 
+    class_weights = torch.load(PSCDB_CLASS_WEIGHTS)
     in_channels = 10
-    n_classes = 7
+    n_classes = len(class_weights)
     l2 = 0.0  # try 5e-4
     learning_rate = 0.00001  # try 0.0001
     optim = "adam"
@@ -68,6 +72,8 @@ def main():
         optimizer = Adadelta(dgcnn.parameters())
     full_experiment_path = os.path.join(EXPERIMENT_PATH, EXPERIMENT_NAME)
     logger = Logger(filepath=os.path.join(full_experiment_path, "trainlog.txt"), mode="a")
+    if not USE_CLASS_WEIGHTS:
+        class_weights = None  # set class weights to None if not use class weights is selected
     model = train_classifier(
         dgcnn,
         train_data=dl_train,
@@ -77,7 +83,7 @@ def main():
         experiment_path=EXPERIMENT_PATH,
         experiment_name=EXPERIMENT_NAME,
         early_stopping_patience=EARLY_STOPPING_PATIENCE,
-        criterion=MulticlassClassificationLoss(),
+        criterion=MulticlassClassificationLoss(weights=class_weights, label_smoothing=LABEL_SMOOTHING),
         logger=logger
     )
 

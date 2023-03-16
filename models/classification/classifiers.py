@@ -41,7 +41,8 @@ class ClassificationLoss(torch.nn.Module, abc.ABC):
 
 
 class MulticlassClassificationLoss(ClassificationLoss):
-    def __init__(self, weights: Optional[Union[torch.Tensor, Iterable]] = None, reduction: Optional[str] = None):
+    def __init__(self, weights: Optional[Union[torch.Tensor, Iterable]] = None, reduction: Optional[str] = None,
+                 label_smoothing: float = 0.0):
         super().__init__()
 
         if weights is None or isinstance(weights, torch.Tensor):
@@ -50,9 +51,11 @@ class MulticlassClassificationLoss(ClassificationLoss):
             self.__weights: Optional[torch.Tensor] = torch.tensor(weights)
 
         if reduction is not None:
-            self._loss: torch.nn.CrossEntropyLoss = torch.nn.CrossEntropyLoss(reduction=reduction)
+            self._loss: torch.nn.CrossEntropyLoss = torch.nn.CrossEntropyLoss(reduction=reduction, weight=weights,
+                                                                              label_smoothing=label_smoothing)
         else:
-            self._loss: torch.nn.CrossEntropyLoss = torch.nn.CrossEntropyLoss()
+            self._loss: torch.nn.CrossEntropyLoss = torch.nn.CrossEntropyLoss(weight=weights,
+                                                                              label_smoothing=label_smoothing)
 
     @property
     def weights(self) -> Optional[torch.Tensor]:
