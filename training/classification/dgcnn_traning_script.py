@@ -15,11 +15,11 @@ import torchinfo
 BATCH_SIZE: final = 200
 EPOCHS: final = 1000
 EARLY_STOPPING_PATIENCE: final = 50
-EXPERIMENT_NAME: final = 'dgcnn_test6'
+EXPERIMENT_NAME: final = 'dgcnn_test10'
 EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "classification", "dgcnn")
-RESTORE_CHECKPOINT: final = True
+RESTORE_CHECKPOINT: final = False
 USE_CLASS_WEIGHTS: final = True
-LABEL_SMOOTHING: final = 0.0
+LABEL_SMOOTHING: final = 0.1
 
 
 def main():
@@ -32,15 +32,15 @@ def main():
     # dl_test = DataLoader(ds_test, batch_size=BATCH_SIZE, shuffle=True)
 
     class_weights = torch.load(PSCDB_CLASS_WEIGHTS)
-    in_channels = 10
+    in_channels = 30
     n_classes = len(class_weights)
     l2 = 0.0  # try 5e-4
     learning_rate = 0.00001  # try 0.0001
     optim = "adam"
     config = {
-        "num_layers": 4,
-        "embedding_dim": 64,
-        "dense_dim": 128,
+        "num_layers": 7,  # was 4
+        "embedding_dim": 64,  # was 64
+        "dense_dim": 128,  # was 128
         "dataset": "PSCDB",
         "k": 0.9
     }
@@ -74,6 +74,32 @@ def main():
     logger = Logger(filepath=os.path.join(full_experiment_path, "trainlog.txt"), mode="a")
     if not USE_CLASS_WEIGHTS:
         class_weights = None  # set class weights to None if not use class weights is selected
+    else:
+        class_weights = class_weights.to(torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu"))
+
+    """from models.layers import GCNConvBlock
+    from torch_geometric.nn.aggr import LSTMAggregation
+    from torch_geometric.nn.dense import Linear
+    from models.classification.classifiers import GraphClassifier
+
+    class BaselineClassifier(GraphClassifier):
+        def __init__(self, dim_features: int, dim_target: int, config: dict):
+            super().__init__(dim_features, dim_target, config)
+            self.gcn0 = GCNConvBlock(71, 500, improved=True)
+            self.gcn1 = GCNConvBlock(500, 500, improved=True)
+            self.lstm_aggregator = LSTMAggregation(500, 500)
+            self.lin0 = Linear(500, 350)
+            self.lin1 = Linear(350, dim_target)
+
+        def forward(self, x, edge_index, batch):
+            x = self.gcn0(x, edge_index)
+            x = self.gcn1(x, edge_index)
+            x = self.lstm_aggregator(x, batch)
+            x = self.lin0(x)
+            return self.lin1(x)
+
+    dgcnn = BaselineClassifier(71, 7, {})"""
+
     model = train_classifier(
         dgcnn,
         train_data=dl_train,

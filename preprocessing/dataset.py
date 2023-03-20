@@ -9,7 +9,7 @@ from preprocessing.constants import MOTION_TYPE, PDB, PARAMS_DIR_SUFFIX, PARAMS_
     NUM_CORES
 from functools import partial
 from graphein.protein.edges.distance import add_hydrogen_bond_interactions, add_peptide_bonds, add_k_nn_edges, \
-    add_ionic_interactions
+    add_ionic_interactions, add_disulfide_interactions, add_aromatic_interactions, add_aromatic_sulphur_interactions
 from graphein.protein.features.nodes import amino_acid_one_hot, meiler_embedding, hydrogen_bond_donor, \
     expasy_protein_scale, hydrogen_bond_acceptor
 from graphein.ml import InMemoryProteinGraphDataset, GraphFormatConvertor, ProteinGraphDataset
@@ -17,21 +17,26 @@ import graphein.ml.conversion as gmlc
 from typing import final, Union, Optional, List, Any
 from preprocessing.utils import FrozenDict
 from torch_geometric.transforms import BaseTransform
-
+from graphein.protein.features.nodes import meiler_embedding
+from preprocessing.edge_functions import add_k_nn_edges
 
 # Globally-visible constants
 EDGE_CONSTRUCTION_FUNCTIONS: final = frozenset([
-    partial(add_k_nn_edges, k=3, long_interaction_threshold=0),
+    partial(add_k_nn_edges, k=3, long_interaction_threshold=0),  # was 3
     add_hydrogen_bond_interactions,
     add_peptide_bonds,
-    # add_ionic_interactions
+    # add_ionic_interactions,  # was commented,
+    add_disulfide_interactions,  # was commented
+    # add_aromatic_sulphur_interactions, # was commented
+    # add_aromatic_interactions  # was commented
 ])
 NODE_METADATA_FUNCTIONS: final = FrozenDict({
-    # "amino_acid_one_hot": amino_acid_one_hot,
     "meiler": meiler_embedding,
+    "expasy": expasy_protein_scale,  # was commented
+    # "amino_acid_one_hot": amino_acid_one_hot,  # was commented
     # "hbond_donors": hydrogen_bond_donor,
-    # "hbond_acceptors": hydrogen_bond_acceptor,
-    # "expasy": expasy_protein_scale
+    # "hbond_acceptors": hydrogen_bond_acceptor
+
 })
 DATASET_NAME_PSCDB: final = "pscdb_cleaned"
 DATASET_NAME_PRETRAINED: final = "pretrain_cleaned"
@@ -82,7 +87,7 @@ def __store_params(path: str, **kwargs):
     if "df" in params:
         df = params["df"]
         del params["df"]
-        df_param_name = params["df_param_name"]
+        df_param_name = params[__DATAFRAME_PARAM_NAME]
         df.to_csv(os.path.join(path, PARAMS_CSV_SUFFIX))
         # additional parameter for dataframe parameter name
         params.update({__DATAFRAME_PARAM_NAME: df_param_name})
@@ -429,7 +434,8 @@ class NodeFeatureFormatter(BaseTransform):
         """
 
         # Convert numpy arrays to tensors for each node feature column, and create combined node feature tensor
-        sample["coords"] = torch.Tensor(sample["coords"][0])
+        if not isinstance(sample["coords"], torch.Tensor):
+            sample["coords"] = torch.Tensor(sample["coords"][0])
         sample["x"] = sample["coords"]
         for feature_col in self.feature_columns:
             sample[feature_col] = torch.Tensor(sample[feature_col])  # convert to tensor

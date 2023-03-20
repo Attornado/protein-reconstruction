@@ -4,19 +4,21 @@ import torch
 from torch_geometric.loader import DataLoader
 from models.classification.classifiers import train_classifier
 from models.classification.diffpool import DiffPool, DiffPoolMulticlassClassificationLoss
-from preprocessing.constants import PSCDB_CLEANED_TRAIN, PSCDB_CLEANED_VAL, PSCDB_CLEANED_TEST, DATA_PATH
+from preprocessing.constants import PSCDB_CLEANED_TRAIN, PSCDB_CLEANED_VAL, PSCDB_CLEANED_TEST, DATA_PATH, \
+    PSCDB_CLASS_WEIGHTS
 from preprocessing.dataset import load_dataset
 from log.logger import Logger
 from torch.optim import Adam, Adadelta
 import torchinfo
 
-
-BATCH_SIZE: final = 30
+BATCH_SIZE: final = 20
 EPOCHS: final = 3000
 EARLY_STOPPING_PATIENCE: final = 200
-EXPERIMENT_NAME: final = 'diffpool_test3'
+EXPERIMENT_NAME: final = 'diffpool_test7'
 EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "classification", "diffpool")
 RESTORE_CHECKPOINT: final = True
+USE_CLASS_WEIGHTS: final = True
+LABEL_SMOOTHING: final = 0.1
 
 
 def main():
@@ -28,8 +30,9 @@ def main():
     dl_val = DataLoader(ds_val, batch_size=BATCH_SIZE, shuffle=True)
     # dl_test = DataLoader(ds_test, batch_size=BATCH_SIZE, shuffle=True)
 
-    in_channels = 10
-    n_classes = 7
+    class_weights = torch.load(PSCDB_CLASS_WEIGHTS)
+    in_channels = 30
+    n_classes = len(class_weights)
     l2 = 0.0  # try 5e-4
     learning_rate = 0.00001  # try 0.00001, 0.0001, 0.001
     optim = "adadelta"
@@ -68,6 +71,10 @@ def main():
         optimizer = Adadelta(diffpool.parameters())
     full_experiment_path = os.path.join(EXPERIMENT_PATH, EXPERIMENT_NAME)
     logger = Logger(filepath=os.path.join(full_experiment_path, "trainlog.txt"), mode="a")
+    if not USE_CLASS_WEIGHTS:
+        class_weights = None  # set class weights to None if not use class weights is selected
+    else:
+        class_weights = class_weights.to(torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu"))
     model = train_classifier(
         diffpool,
         train_data=dl_train,
@@ -77,7 +84,7 @@ def main():
         experiment_path=EXPERIMENT_PATH,
         experiment_name=EXPERIMENT_NAME,
         early_stopping_patience=EARLY_STOPPING_PATIENCE,
-        criterion=DiffPoolMulticlassClassificationLoss(),
+        criterion=DiffPoolMulticlassClassificationLoss(weights=class_weights, label_smoothing=LABEL_SMOOTHING),
         logger=logger
     )
 
