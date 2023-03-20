@@ -1,7 +1,6 @@
 import os
 import shutil
 from typing import final
-
 import pandas as pd
 import torch
 import numpy as np
@@ -16,6 +15,7 @@ from preprocessing.utils import pscdb_read, get_uniprot_IDs_and_pdb_codes, train
 
 
 __INTEGRATE_OTHER_TYPE_PROTEINS: final = True
+__RECREATE_PRETRAINING: final = False
 
 
 def main():
@@ -81,39 +81,40 @@ def main():
         shutil.copytree(src=os.path.join(PSCDB_CLEANED_TEST, PSCDB_PDBS_SUFFIX), dst=PATH_PDBS_DIR, dirs_exist_ok=True)
 
     # Create pre-training datasets
-    ds_pt_train = create_dataset_pretrain(
-        pdb_paths=pdb_paths_train,
-        export_path=PRETRAIN_CLEANED_TRAIN,
-        in_memory=False,
-        store_params=True
-    )
-    ds_pt_val = create_dataset_pretrain(
-        pdb_paths=pdb_paths_val,
-        export_path=PRETRAIN_CLEANED_VAL,
-        in_memory=False,
-        store_params=True
-    )
-    ds_pt_test = create_dataset_pretrain(
-        pdb_paths=pdb_paths_test,
-        export_path=PRETRAIN_CLEANED_TEST,
-        in_memory=False,
-        store_params=True
-    )
+    if __RECREATE_PRETRAINING:
+        ds_pt_train = create_dataset_pretrain(
+            pdb_paths=pdb_paths_train,
+            export_path=PRETRAIN_CLEANED_TRAIN,
+            in_memory=False,
+            store_params=True
+        )
+        ds_pt_val = create_dataset_pretrain(
+            pdb_paths=pdb_paths_val,
+            export_path=PRETRAIN_CLEANED_VAL,
+            in_memory=False,
+            store_params=True
+        )
+        ds_pt_test = create_dataset_pretrain(
+            pdb_paths=pdb_paths_test,
+            export_path=PRETRAIN_CLEANED_TEST,
+            in_memory=False,
+            store_params=True
+        )
 
-    # Create data loader to check if everything's ok
-    dl = DataLoader(ds_pt_train, batch_size=2, shuffle=True, drop_last=True)
-    print(len(dl))
-    print(next(iter(dl)))
+        # Create data loader to check if everything's ok
+        dl = DataLoader(ds_pt_train, batch_size=2, shuffle=True, drop_last=True)
+        print(len(dl))
+        print(next(iter(dl)))
 
-    # Create data loader to check if everything's ok
-    dl = DataLoader(ds_pt_val, batch_size=2, shuffle=True, drop_last=True)
-    print(len(dl))
-    print(next(iter(dl)))
+        # Create data loader to check if everything's ok
+        dl = DataLoader(ds_pt_val, batch_size=2, shuffle=True, drop_last=True)
+        print(len(dl))
+        print(next(iter(dl)))
 
-    # Create data loader to check if everything's ok
-    dl = DataLoader(ds_pt_test, batch_size=2, shuffle=True, drop_last=True)
-    print(len(dl))
-    print(next(iter(dl)))
+        # Create data loader to check if everything's ok
+        dl = DataLoader(ds_pt_test, batch_size=2, shuffle=True, drop_last=True)
+        print(len(dl))
+        print(next(iter(dl)))
 
     # Create data loader to check if everything's ok
     dl = DataLoader(ds_cl_train, batch_size=1, shuffle=True, drop_last=True)
@@ -190,10 +191,10 @@ def main():
     print(f"Loaded class weights {class_weights}")
 
     # Load the dataset and create the data loader to check if everything's ok
-    ds2 = load_dataset(PRETRAIN_CLEANED_TRAIN, dataset_type="pretrain")
-    print(len(ds2))
-    dl = DataLoader(ds2, batch_size=2, shuffle=True, drop_last=True)
-    print(next(iter(dl)))
+    #ds2 = load_dataset(PRETRAIN_CLEANED_TRAIN, dataset_type="pretrain")
+    #print(len(ds2))
+    #dl = DataLoader(ds2, batch_size=2, shuffle=True, drop_last=True)
+    #print(next(iter(dl)))
 
     ds3 = load_dataset(PSCDB_CLEANED_TRAIN, dataset_type="pscdb")
     dl = DataLoader(ds3, batch_size=2, shuffle=True, drop_last=True)

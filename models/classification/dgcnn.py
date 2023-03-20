@@ -50,7 +50,7 @@ class DGCNN(GraphClassifier):
             'REDDIT-BINARY': {'0.6': 370, '0.9': 1002},
             'REDDIT-MULTI-5K': {'0.6': 469, '0.9': 1081},
             'COLLAB': {'0.6': 61, '0.9': 130},
-            'PSCDB': {'0.6': 327, '0.9': 492}
+            'PSCDB': {'0.6': 327, '0.9': 600}  # was 327, 429
         }
 
         self.k = self.ks[config['dataset']][str(config['k'])]

@@ -133,14 +133,15 @@ class GraphClassifier(SerializableModule):
         loss = self.loss(y_hat=y_hat, y=y, criterion=criterion)
 
         # Compute the metrics
-        acc = accuracy(preds=y_hat, target=y, task='multiclass', num_classes=n_classes)
+        acc = accuracy(preds=y_hat, target=y, task='multiclass', num_classes=n_classes, average="macro")
         if top_k is not None:
-            top_k_acc = float(accuracy(preds=y_hat, target=y, task='multiclass', num_classes=n_classes, top_k=top_k))
+            top_k_acc = float(accuracy(preds=y_hat, target=y, task='multiclass', num_classes=n_classes, top_k=top_k,
+                                       average="macro"))
         else:
             top_k_acc = None
-        prec = precision(preds=y_hat, target=y, task='multiclass', num_classes=n_classes, average="weighted")
-        rec = recall(preds=y_hat, target=y, task='multiclass', num_classes=n_classes, average="weighted")
-        f1 = f1_score(preds=y_hat, target=y, task='multiclass', num_classes=n_classes, average="weighted")
+        prec = precision(preds=y_hat, target=y, task='multiclass', num_classes=n_classes, average="macro")
+        rec = recall(preds=y_hat, target=y, task='multiclass', num_classes=n_classes, average="macro")
+        f1 = f1_score(preds=y_hat, target=y, task='multiclass', num_classes=n_classes, average="macro")
 
         return float(loss), float(acc), top_k_acc, prec, rec, f1
 
