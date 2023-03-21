@@ -1,40 +1,12 @@
 from __future__ import annotations
-import itertools
-from itertools import combinations, product
-from typing import Dict, Iterable, List, Optional, Tuple, Union
+from typing import Iterable, Union
 import networkx as nx
 import numpy as np
-import pandas as pd
 from graphein.protein import add_edge, compute_distmat, filter_distmat
 from loguru import logger as log
-from scipy.spatial import Delaunay
-from scipy.spatial.distance import pdist, squareform
-from sklearn.neighbors import NearestNeighbors, kneighbors_graph
-
-
-from graphein.protein.resi_atoms import (
-    AA_RING_ATOMS,
-    AROMATIC_RESIS,
-    BACKBONE_ATOMS,
-    BOND_TYPES,
-    CATION_PI_RESIS,
-    CATION_RESIS,
-    DISULFIDE_ATOMS,
-    DISULFIDE_RESIS,
-    HYDROPHOBIC_RESIS,
-    IONIC_RESIS,
-    NEG_AA,
-    PI_RESIS,
-    POS_AA,
-    RING_NORMAL_ATOMS,
-    SALT_BRIDGE_ANIONS,
-    SALT_BRIDGE_ATOMS,
-    SALT_BRIDGE_CATIONS,
-    SALT_BRIDGE_RESIDUES,
-    SULPHUR_RESIS,
-    VDW_RADII,
-)
+from sklearn.neighbors import NearestNeighbors
 from graphein.protein.utils import filter_dataframe
+
 
 INFINITE_DIST = 10_000.0  # np.inf leads to errors in some cases
 
@@ -64,8 +36,7 @@ def add_k_nn_edges(
         - `inter` removes inter-connections between nodes of the same chain.
         - `intra` removes intra-connections between nodes of different chains.
     :type exclude_edges: Iterable[str].
-    :param exclude_self_loops: Whether or not to mark each sample as the first
-        nearest neighbor to itself.
+    :param exclude_self_loops: Whether to mark each sample as the first nearest neighbor to itself.
     :type exclude_self_loops: Union[bool, str]
     :param kind_name: Name for kind of edges in networkx graph.
     :type kind_name: str

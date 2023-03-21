@@ -136,7 +136,7 @@ def main():
     print(next(iter(dl)))
 
     # Create data loader to check if everything's ok
-    dl = DataLoader(ds_cl_val, batch_size=1, shuffle=True, drop_last=True)
+    dl = DataLoader(ds_cl_val, batch_size=1, shuffle=False, drop_last=True)
     y_distribution_val = {}
     for el in iter(dl):
         if el.num_nodes < min_n:
@@ -152,7 +152,7 @@ def main():
     print(next(iter(dl)))
 
     # Create data loader to check if everything's ok
-    dl = DataLoader(ds_cl_test, batch_size=1, shuffle=True, drop_last=True)
+    dl = DataLoader(ds_cl_test, batch_size=1, shuffle=False, drop_last=True)
     y_distribution_test = {}
     for el in iter(dl):
         if el.num_nodes < min_n:
@@ -187,7 +187,7 @@ def main():
     print(f"Class weights: {class_weights}")
     class_weights = torch.tensor(class_weights)
     torch.save(class_weights, PSCDB_CLASS_WEIGHTS)
-    class_weights_loqded = torch.load(PSCDB_CLASS_WEIGHTS)
+    class_weights = torch.load(PSCDB_CLASS_WEIGHTS)
     print(f"Loaded class weights {class_weights}")
 
     # Load the dataset and create the data loader to check if everything's ok
@@ -197,7 +197,7 @@ def main():
     #print(next(iter(dl)))
 
     ds3 = load_dataset(PSCDB_CLEANED_TRAIN, dataset_type="pscdb")
-    dl = DataLoader(ds3, batch_size=2, shuffle=True, drop_last=True)
+    dl = DataLoader(ds3, batch_size=2, shuffle=False, drop_last=True)
     print(next(iter(dl)))
 
 
