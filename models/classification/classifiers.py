@@ -165,7 +165,7 @@ class GraphClassifier(SerializableModule):
         return loss
 
     @abstractmethod
-    def forward(self, x, edge_index, batch):
+    def forward(self, x: torch.Tensor, edge_index: torch.Tensor, batch: torch.Tensor):
         raise NotImplementedError(f"Each {self.__class__} class has to implement the forward() method")
 
     def serialize_constructor_params(self, *args, **kwargs) -> dict:

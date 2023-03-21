@@ -19,7 +19,8 @@ PATH_PDBS_DIR: final = os.path.join(PATH_ALPHAFOLD, "pdbs")
 # PSCDB-related constants
 MOTION_TYPE: final = "motion"
 PDB: final = "pdb"
-USED_COLUMNS: final = {"Free PDB": PDB, "motion_type": MOTION_TYPE}
+PDB_BOUND: final = "pdb_bound"
+USED_COLUMNS: final = {"Free PDB": PDB, "Bound PDB": "pdb_bound", "motion_type": MOTION_TYPE}
 OTHER_MOTION_TYPE: final = "other_motion"
 PSCDB_PATH: final = os.path.join(DATA_PATH, "pscdb", "structural_rearrangement_data.csv")
 
@@ -48,6 +49,14 @@ PSCDB_CLEANED_TRAIN: final = os.path.join(PSCDB_CLEANED, "train")
 PSCDB_CLEANED_VAL: final = os.path.join(PSCDB_CLEANED, "validation")
 PSCDB_CLEANED_TEST: final = os.path.join(PSCDB_CLEANED, "test")
 PSCDB_CLASS_WEIGHTS: final = os.path.join(PSCDB_CLEANED, "class_weights.pt")
+
+# Paired-PSCDB
+PSCDB_PAIRED_CLEANED: final = os.path.join(CLEANED_DATA, "pscdb_paired")
+PSCDB_PAIRED_CLEANED_TRAIN: final = os.path.join(PSCDB_PAIRED_CLEANED, "train")
+PSCDB_PAIRED_CLEANED_VAL: final = os.path.join(PSCDB_PAIRED_CLEANED, "validation")
+PSCDB_PAIRED_CLEANED_TEST: final = os.path.join(PSCDB_PAIRED_CLEANED, "test")
+PSCDB_PAIRED_CLASS_WEIGHTS: final = os.path.join(PSCDB_PAIRED_CLEANED, "class_weights.pt")
+
 
 PSCDB_PDBS_SUFFIX: final = "raw"
 PARAMS_DIR_SUFFIX: final = "params"
