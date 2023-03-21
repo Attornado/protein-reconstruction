@@ -5,7 +5,7 @@ from typing import Union, List, Optional
 import pandas as pd
 from preprocessing.constants import UNIPROTS_KEY, PDBS_KEY, USED_COLUMNS, RANDOM_SEED, TEST_SIZE_PSCDB, \
     VAL_SIZE_PSCDB, PDB, PATHS_KEY, MOTION_COLUMN, FREE_PDB_COLUMN, MOTION_TYPE, OTHER_MOTION_TYPE, \
-    OTHER_MOTION_COLUMN_NAMES
+    OTHER_MOTION_COLUMN_NAMES, BOUND_PDB_COLUMN, PDB_BOUND
 from sklearn.model_selection import train_test_split
 
 
@@ -173,18 +173,20 @@ def read_others_original_format(path: str, val_size: Optional[float] = None, tes
         df = pd.concat(sub_dfs)
 
     # Drop all columns besides PDB and motion type ones
-    df = df.drop(df.columns.difference([FREE_PDB_COLUMN, MOTION_COLUMN]), axis=1)
+    df = df.drop(df.columns.difference([FREE_PDB_COLUMN, BOUND_PDB_COLUMN, MOTION_COLUMN]), axis=1)
     df = df.drop_duplicates(subset=[FREE_PDB_COLUMN])
 
     # Rename columns according to our format
     column_renaming = {
         FREE_PDB_COLUMN: PDB,
+        BOUND_PDB_COLUMN: PDB_BOUND,
         MOTION_COLUMN: MOTION_TYPE
     }
     df = df.rename(columns=column_renaming)
 
     # Replace <PDBcode>_<chains> with <PDBcode>
     df.loc[:, PDB] = df[PDB].apply(lambda free_pdb_id: free_pdb_id.split("_")[0].strip())
+    df.loc[:, PDB_BOUND] = df[PDB_BOUND].apply(lambda free_pdb_id: free_pdb_id.split("_")[0].strip())
     df.loc[:, MOTION_TYPE] = OTHER_MOTION_TYPE
 
     # Perform train/validation/test split if sizes are given
