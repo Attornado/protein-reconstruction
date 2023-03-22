@@ -281,7 +281,7 @@ class PairedProteinGraphDataset(Dataset):
     def download(self):
         pass
 
-    def get(self, idx: int) -> Data:
+    def get(self, idx: int) -> PairedData:
         """
        Gets the i-th (before, after) protein graph pair..
 

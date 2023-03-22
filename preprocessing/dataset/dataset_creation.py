@@ -6,14 +6,13 @@ from graphein.protein import ProteinGraphConfig
 from sklearn.preprocessing import LabelBinarizer
 from torch_geometric.data import HeteroData, Data
 from preprocessing.constants import MOTION_TYPE, PDB, PARAMS_DIR_SUFFIX, PARAMS_CSV_SUFFIX, PARAMS_JSON_SUFFIX, \
-    NUM_CORES, PDB_BOUND
+    NUM_CORES, PDB_BOUND, ENZYMES_CLASS, FOLD_CLASS
 from functools import partial
 from graphein.protein.edges.distance import add_hydrogen_bond_interactions, add_peptide_bonds, \
-    add_disulfide_interactions
+    add_disulfide_interactions, add_aromatic_sulphur_interactions, add_ionic_interactions
 from graphein.ml import InMemoryProteinGraphDataset, GraphFormatConvertor, ProteinGraphDataset
 import graphein.ml.conversion as gmlc
 from typing import final, Union, Optional, List, Any
-
 from preprocessing.dataset.paired_dataset import PairedProteinGraphDataset
 from preprocessing.utils import FrozenDict
 from torch_geometric.transforms import BaseTransform
@@ -23,12 +22,12 @@ from preprocessing.dataset.edge_functions import add_k_nn_edges
 
 # Globally-visible constants
 EDGE_CONSTRUCTION_FUNCTIONS: final = frozenset([
-    partial(add_k_nn_edges, k=3, long_interaction_threshold=0),  # was 3
+    partial(add_k_nn_edges, k=5, long_interaction_threshold=0),  # was 3
     add_hydrogen_bond_interactions,
     add_peptide_bonds,
     # add_ionic_interactions,  # was commented,
     add_disulfide_interactions,  # was commented
-    # add_aromatic_sulphur_interactions, # was commented
+    add_aromatic_sulphur_interactions,  # was commented
     # add_aromatic_interactions  # was commented
 ])
 NODE_METADATA_FUNCTIONS: final = FrozenDict({
@@ -98,8 +97,11 @@ def __store_params(path: str, **kwargs):
         json.dump(params, fp)
 
 
-def create_dataset_pscdb_paired(df: pd.DataFrame, export_path: str, graph_format: str = "pyg",
-                                conversion_verbosity: str = "gnn", store_params: bool = False) -> PairedProteinGraphDataset:
+def create_dataset_pscdb_paired(df: pd.DataFrame,
+                                export_path: str,
+                                graph_format: str = "pyg",
+                                conversion_verbosity: str = "gnn",
+                                store_params: bool = False) -> PairedProteinGraphDataset:
     if graph_format not in FORMATS:
         raise ValueError(f"Invalid graph format: {graph_format}, it needs to be one of the following: {str(FORMATS)}")
 
@@ -308,6 +310,282 @@ def create_dataset_pscdb(df: pd.DataFrame, export_path: str, in_memory: bool = F
         ds = InMemoryProteinGraphDataset(
             root=export_path,
             name=DATASET_NAME_PSCDB,
+            pdb_codes=pdbs,
+            graphein_config=config,
+            graph_format_convertor=converter,
+            graph_label_map=graph_label_map,
+            transform=NodeFeatureFormatter(list(NODE_METADATA_FUNCTIONS.keys())),
+            num_cores=NUM_CORES
+        )
+    else:
+        ds = ProteinGraphDataset(
+            root=export_path,
+            pdb_codes=pdbs,
+            graphein_config=config,
+            graph_format_convertor=converter,
+            graph_labels=y,
+            transform=NodeFeatureFormatter(list(NODE_METADATA_FUNCTIONS.keys())),
+            num_cores=NUM_CORES
+        )
+
+    # Store given parameters if required
+    if store_params:
+        __store_params(
+            path=os.path.join(export_path, PARAMS_DIR_SUFFIX),
+            df=df,
+            df_param_name="df",
+            graph_format=graph_format,
+            conversion_verbosity=conversion_verbosity,
+            in_memory=in_memory
+        )
+    return ds
+
+
+def create_dataset_fold_classification(df: pd.DataFrame, export_path: str, in_memory: bool = False, graph_format: str = "pyg",
+                           conversion_verbosity: str = "gnn", store_params: bool = False) -> \
+        Union[InMemoryProteinGraphDataset, ProteinGraphDataset]:
+    """
+    Takes a dataframe, extracts the PDB codes and the labels, creates a graphein config, a graph format converter and a
+    dataset object.
+
+    :param df: the dataframe containing the PDB codes and the labels
+    :type df: pd.DataFrame
+    :param export_path: The path to the directory where the dataset will be stored
+    :type export_path: str
+    :param in_memory: if True, the dataset will be loaded in memory. If False, the dataset will be loaded on-demand,
+    defaults to False
+    :type in_memory: bool (optional)
+    :param graph_format: the format of the graph you want to store, defaults to pyg
+    :type graph_format: str (optional)
+    :param conversion_verbosity: This parameter controls the verbosity of the conversion process. It can be one of the
+    following:, defaults to gnn
+    :type conversion_verbosity: str (optional)
+    :param store_params: bool = False, defaults to False
+    :type store_params: bool (optional)
+    :return: A dataset object
+    """
+
+    if graph_format not in FORMATS:
+        raise ValueError(f"Invalid graph format: {graph_format}, it needs to be one of the following: {str(FORMATS)}")
+
+    if conversion_verbosity not in VERBOSITIES_CONVERSION:
+        raise ValueError(f"Invalid conversion verbosity: {conversion_verbosity}, it needs to be one of the following: "
+                         f"{str(VERBOSITIES_CONVERSION)}")
+
+    # Extract label
+    one_hot_encode = LabelBinarizer().fit_transform(df[FOLD_CLASS])  # one hot encode labels
+    y = [torch.argmax(torch.Tensor(lab)).type(torch.LongTensor) for lab in one_hot_encode]  # convert to sparse labels
+
+    # Extract PDBs
+    pdbs = df[PDB].to_list()
+
+    # If dataset must be in-memory, create graph-level label map
+    graph_label_map = {}
+    if in_memory:
+        for i in range(0, len(pdbs)):
+            graph_label_map[pdbs[i]] = y[i]
+
+    # Define graphein config, starting with the edge construction functions
+    config = {
+        "edge_construction_functions": list(EDGE_CONSTRUCTION_FUNCTIONS)
+    }
+
+    # Handle additional node features like Meiler's embeddings and amino-acid one-hot encoding, updating the config dict
+    if len(NODE_METADATA_FUNCTIONS) > 0:
+        config.update({"node_metadata_functions": list(NODE_METADATA_FUNCTIONS.values())})
+    config = ProteinGraphConfig(**config)
+
+    # Adding additional node features to the columns the graph format converter needs to store
+    columns = list(NODE_METADATA_FUNCTIONS.keys())
+    if conversion_verbosity == "gnn":
+        columns.extend([
+            "edge_index",
+            "coords",
+            "name",
+            "node_id",
+        ])
+    elif conversion_verbosity == "default":
+        columns.extend([
+            "b_factor",
+            "chain_id",
+            "coords",
+            "dist_mat",
+            "dist_mat",
+            "edge_index",
+            "kind",
+            "name",
+            "node_id",
+            "residue_name",
+        ])
+    elif conversion_verbosity == "all_info":
+        columns.extend([
+            "atom_type",
+            "b_factor",
+            "chain_id",
+            "chain_ids",
+            "config",
+            "coords",
+            "dist_mat",
+            "edge_index",
+            "element_symbol",
+            "kind",
+            "name",
+            "node_id",
+            "node_type",
+            "pdb_df",
+            "raw_pdb_df",
+            "residue_name",
+            "residue_number",
+            "rgroup_df",
+            "sequence_A",
+            "sequence_B",
+        ])
+
+    # Format converter
+    converter = GraphFormatConvertor(src_format="nx", dst_format=graph_format, columns=columns)
+
+    # Create dataset
+    if in_memory:
+        ds = InMemoryProteinGraphDataset(
+            root=export_path,
+            name="fold_classification.pt",
+            pdb_codes=pdbs,
+            graphein_config=config,
+            graph_format_convertor=converter,
+            graph_label_map=graph_label_map,
+            transform=NodeFeatureFormatter(list(NODE_METADATA_FUNCTIONS.keys())),
+            num_cores=NUM_CORES
+        )
+    else:
+        ds = ProteinGraphDataset(
+            root=export_path,
+            pdb_codes=pdbs,
+            graphein_config=config,
+            graph_format_convertor=converter,
+            graph_labels=y,
+            transform=NodeFeatureFormatter(list(NODE_METADATA_FUNCTIONS.keys())),
+            num_cores=NUM_CORES
+        )
+
+    # Store given parameters if required
+    if store_params:
+        __store_params(
+            path=os.path.join(export_path, PARAMS_DIR_SUFFIX),
+            df=df,
+            df_param_name="df",
+            graph_format=graph_format,
+            conversion_verbosity=conversion_verbosity,
+            in_memory=in_memory
+        )
+    return ds
+def create_dataset_enzymes(df: pd.DataFrame, export_path: str, in_memory: bool = False, graph_format: str = "pyg",
+                           conversion_verbosity: str = "gnn", store_params: bool = False) -> \
+        Union[InMemoryProteinGraphDataset, ProteinGraphDataset]:
+    """
+    Takes a dataframe, extracts the PDB codes and the labels, creates a graphein config, a graph format converter and a
+    dataset object.
+
+    :param df: the dataframe containing the PDB codes and the labels
+    :type df: pd.DataFrame
+    :param export_path: The path to the directory where the dataset will be stored
+    :type export_path: str
+    :param in_memory: if True, the dataset will be loaded in memory. If False, the dataset will be loaded on-demand,
+    defaults to False
+    :type in_memory: bool (optional)
+    :param graph_format: the format of the graph you want to store, defaults to pyg
+    :type graph_format: str (optional)
+    :param conversion_verbosity: This parameter controls the verbosity of the conversion process. It can be one of the
+    following:, defaults to gnn
+    :type conversion_verbosity: str (optional)
+    :param store_params: bool = False, defaults to False
+    :type store_params: bool (optional)
+    :return: A dataset object
+    """
+
+    if graph_format not in FORMATS:
+        raise ValueError(f"Invalid graph format: {graph_format}, it needs to be one of the following: {str(FORMATS)}")
+
+    if conversion_verbosity not in VERBOSITIES_CONVERSION:
+        raise ValueError(f"Invalid conversion verbosity: {conversion_verbosity}, it needs to be one of the following: "
+                         f"{str(VERBOSITIES_CONVERSION)}")
+
+    # Extract label
+    one_hot_encode = LabelBinarizer().fit_transform(df[ENZYMES_CLASS])  # one hot encode labels
+    y = [torch.argmax(torch.Tensor(lab)).type(torch.LongTensor) for lab in one_hot_encode]  # convert to sparse labels
+
+    # Extract PDBs
+    pdbs = df[PDB].to_list()
+
+    # If dataset must be in-memory, create graph-level label map
+    graph_label_map = {}
+    if in_memory:
+        for i in range(0, len(pdbs)):
+            graph_label_map[pdbs[i]] = y[i]
+
+    # Define graphein config, starting with the edge construction functions
+    config = {
+        "edge_construction_functions": list(EDGE_CONSTRUCTION_FUNCTIONS)
+    }
+
+    # Handle additional node features like Meiler's embeddings and amino-acid one-hot encoding, updating the config dict
+    if len(NODE_METADATA_FUNCTIONS) > 0:
+        config.update({"node_metadata_functions": list(NODE_METADATA_FUNCTIONS.values())})
+    config = ProteinGraphConfig(**config)
+
+    # Adding additional node features to the columns the graph format converter needs to store
+    columns = list(NODE_METADATA_FUNCTIONS.keys())
+    if conversion_verbosity == "gnn":
+        columns.extend([
+            "edge_index",
+            "coords",
+            "name",
+            "node_id",
+        ])
+    elif conversion_verbosity == "default":
+        columns.extend([
+            "b_factor",
+            "chain_id",
+            "coords",
+            "dist_mat",
+            "dist_mat",
+            "edge_index",
+            "kind",
+            "name",
+            "node_id",
+            "residue_name",
+        ])
+    elif conversion_verbosity == "all_info":
+        columns.extend([
+            "atom_type",
+            "b_factor",
+            "chain_id",
+            "chain_ids",
+            "config",
+            "coords",
+            "dist_mat",
+            "edge_index",
+            "element_symbol",
+            "kind",
+            "name",
+            "node_id",
+            "node_type",
+            "pdb_df",
+            "raw_pdb_df",
+            "residue_name",
+            "residue_number",
+            "rgroup_df",
+            "sequence_A",
+            "sequence_B",
+        ])
+
+    # Format converter
+    converter = GraphFormatConvertor(src_format="nx", dst_format=graph_format, columns=columns)
+
+    # Create dataset
+    if in_memory:
+        ds = InMemoryProteinGraphDataset(
+            root=export_path,
+            name="enzymes.pt",
             pdb_codes=pdbs,
             graphein_config=config,
             graph_format_convertor=converter,
@@ -585,6 +863,3 @@ class NodeFeatureFormatter(BaseTransform):
         # Add renamed y column if required
         if "graph_y" in sample:
             sample["y"] = sample["graph_y"]
-
-
-
