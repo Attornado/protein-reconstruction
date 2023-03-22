@@ -1,20 +1,20 @@
 import os
 from typing import final
 import torch
-from torch.optim import Adam, Adadelta
+from torch.optim import Adadelta
 from torch_geometric.loader import DataLoader
 from torchinfo import torchinfo
-from models.pretraining.encoders import RevGATConvEncoder, RevGCNEncoder, SimpleGCNEncoder, RevSAGEConvEncoder
-from models.pretraining.graph_infomax import DeepGraphInfomaxV2, train_DGI, RandomSampleCorruption, MeanPoolReadout, \
+from models.pretraining.encoders import RevGCNEncoder
+from models.pretraining.graph_infomax import DeepGraphInfomaxV2, train_DGI, MeanPoolReadout, \
     RandomPermutationCorruption
 from preprocessing.constants import PRETRAIN_CLEANED_TRAIN, PRETRAIN_CLEANED_VAL, DATA_PATH
-from preprocessing.dataset import load_dataset
+from preprocessing.dataset.dataset_creation import load_dataset
 
 
 BATCH_SIZE: final = 500
 EPOCHS: final = 150
 EARLY_STOPPING_PATIENCE: final = 20
-EXPERIMENT_NAME: final = 'dgi_rev_gcn_test11'
+EXPERIMENT_NAME: final = 'dgi_rev_gcn_test14'
 EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "pretraining", "dgi")
 RESTORE_CHECKPOINT: final = True
 
@@ -106,12 +106,12 @@ def main():
 
     encoder = RevGCNEncoder(
         in_channels=in_channels,
-        hidden_channels=100,
-        out_channels=100,
+        hidden_channels=150,  # was 100
+        out_channels=150,  # was 100
         num_convs=60,
-        improved=False,
+        improved=True,
         dropout=0.1,
-        num_groups=10,
+        num_groups=5,
         normalize_hidden=True
     )
 
@@ -120,7 +120,7 @@ def main():
     # corruption = RandomSampleCorruption(train_data=dl_train_corruption, val_data=dl_val_corruption, device=device)
     corruption = RandomPermutationCorruption(device=device)
     dgi = DeepGraphInfomaxV2(
-        hidden_channels=100,
+        hidden_channels=150,  # was 100
         encoder=encoder,
         normalize_hidden=True,
         readout=readout,

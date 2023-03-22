@@ -3,11 +3,11 @@ from typing import final
 import torch
 from torch_geometric.loader import DataLoader
 from log.logger import Logger
-from models.classification.pscdb_baseline import GNNBaselinePSCDB, GCN_MODEL_TYPE, GAT_MODEL_TYPE
+from models.classification.pscdb_baseline import GNNBaselinePSCDB, GAT_MODEL_TYPE
 from models.classification.classifiers import train_classifier, MulticlassClassificationLoss
-from preprocessing.constants import PSCDB_CLEANED_TRAIN, PSCDB_CLEANED_VAL, PSCDB_CLEANED_TEST, DATA_PATH, \
+from preprocessing.constants import PSCDB_CLEANED_TRAIN, PSCDB_CLEANED_VAL, DATA_PATH, \
     PSCDB_CLASS_WEIGHTS
-from preprocessing.dataset import load_dataset
+from preprocessing.dataset.dataset_creation import load_dataset
 from torch.optim import Adam, Adadelta
 import torchinfo
 

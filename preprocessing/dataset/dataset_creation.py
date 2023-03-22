@@ -4,22 +4,21 @@ import pandas as pd
 import torch
 from graphein.protein import ProteinGraphConfig
 from sklearn.preprocessing import LabelBinarizer
-from torch_geometric.data import Dataset
 from torch_geometric.data import HeteroData, Data
 from preprocessing.constants import MOTION_TYPE, PDB, PARAMS_DIR_SUFFIX, PARAMS_CSV_SUFFIX, PARAMS_JSON_SUFFIX, \
     NUM_CORES, PDB_BOUND
 from functools import partial
-from graphein.protein.edges.distance import add_hydrogen_bond_interactions, add_peptide_bonds, add_k_nn_edges, \
-    add_ionic_interactions, add_disulfide_interactions, add_aromatic_interactions, add_aromatic_sulphur_interactions
-from graphein.protein.features.nodes import amino_acid_one_hot, meiler_embedding, hydrogen_bond_donor, \
-    expasy_protein_scale, hydrogen_bond_acceptor
+from graphein.protein.edges.distance import add_hydrogen_bond_interactions, add_peptide_bonds, \
+    add_disulfide_interactions
 from graphein.ml import InMemoryProteinGraphDataset, GraphFormatConvertor, ProteinGraphDataset
 import graphein.ml.conversion as gmlc
-from typing import final, Union, Optional, List, Any, Callable
+from typing import final, Union, Optional, List, Any
+
+from preprocessing.dataset.paired_dataset import PairedProteinGraphDataset
 from preprocessing.utils import FrozenDict
 from torch_geometric.transforms import BaseTransform
 from graphein.protein.features.nodes import meiler_embedding
-from preprocessing.edge_functions import add_k_nn_edges
+from preprocessing.dataset.edge_functions import add_k_nn_edges
 
 
 # Globally-visible constants
@@ -99,172 +98,8 @@ def __store_params(path: str, **kwargs):
         json.dump(params, fp)
 
 
-class PSCDBPairedDataset(Dataset):
-
-    def __init__(self,
-                 root: str,
-                 pdb_paths0: Optional[List[str]] = None,
-                 pdb_paths1: Optional[List[str]] = None,
-                 pdb_codes0: Optional[List[str]] = None,
-                 pdb_codes1: Optional[List[str]] = None,
-                 uniprot_ids0: Optional[List[str]] = None,
-                 uniprot_ids1: Optional[List[str]] = None,
-                 graph_labels0: Optional[List[torch.Tensor]] = None,
-                 graph_labels1: Optional[List[torch.Tensor]] = None,
-                 node_labels0: Optional[List[torch.Tensor]] = None,
-                 node_labels1: Optional[List[torch.Tensor]] = None,
-                 chain_selections0: Optional[List[str]] = None,
-                 chain_selections1: Optional[List[str]] = None,
-                 graphein_config: ProteinGraphConfig = ProteinGraphConfig(),
-                 graph_format_convertor: GraphFormatConvertor = GraphFormatConvertor(
-                     src_format="nx", dst_format="pyg"
-                 ),
-                 graph_transformation_funcs: Optional[List[Callable]] = None,
-                 pdb_transform: Optional[List[Callable]] = None,
-                 paired_transform: Optional[Callable] = None,
-                 paired_pre_transform: Optional[Callable] = None,
-                 paired_pre_filter: Optional[Callable] = None,
-                 transform: Optional[Callable] = None,
-                 pre_transform: Optional[Callable] = None,
-                 pre_filter: Optional[Callable] = None,
-                 num_cores: int = 16,
-                 af_version: int = 2):
-
-        flag: bool = False
-        if pdb_paths0 is not None and pdb_paths1 is not None:
-            flag = True
-            if len(pdb_codes0) != len(pdb_codes1):
-                raise ValueError(f"pdb_paths0 and pdb_paths1 should have the same length, got {len(pdb_paths0)} and "
-                                 f"{len(pdb_paths1)}")
-        if pdb_codes0 is not None and pdb_codes1 is not None:
-            if flag:
-                raise ValueError("Only one parameter between pdb_paths/pdb_codes/uniprot_ids should be given, 2 given.")
-            flag = True
-            if len(pdb_codes0) != len(pdb_codes1):
-                raise ValueError(f"pdb_codes0 and pdb_codes1 should have the same length, got {len(pdb_codes0)} and "
-                                 f"{len(pdb_codes1)}")
-        if uniprot_ids0 is not None and uniprot_ids1 is not None:
-            if flag:
-                raise ValueError("Only one parameter between pdb_paths/pdb_codes/uniprot_ids should be given, 2 given.")
-            flag = True
-            if len(pdb_codes0) != len(pdb_codes1):
-                raise ValueError(f"uniprot_ids0 and uniprot_ids1 should have the same length, got {len(uniprot_ids0)} "
-                                 f"and {len(uniprot_ids1)}")
-        if not flag:
-            raise ValueError("Exactly one couple of parameters type should be given. 0 given.")
-
-        if len(graph_labels0) != len(graph_labels1):
-            raise ValueError(f"graph_labels0 and graph_labels1 must have the same length. {len(graph_labels0)} and "
-                             f"{len(graph_labels1)} given.")
-
-        self.__dataset0 = ProteinGraphDataset(
-            root=root,
-            pdb_paths=pdb_paths0,
-            pdb_codes=pdb_codes0,
-            uniprot_ids=uniprot_ids0,
-            graph_labels=graph_labels0,
-            node_labels=node_labels0,
-            chain_selections=chain_selections0,
-            graphein_config=graphein_config,
-            graph_format_convertor=graph_format_convertor,
-            graph_transformation_funcs=graph_transformation_funcs,
-            pdb_transform=pdb_transform,
-            transform=transform,
-            pre_transform=pre_transform,
-            pre_filter=pre_filter,
-            num_cores=num_cores,
-            af_version=af_version
-        )
-        self.__dataset1 = ProteinGraphDataset(
-            root=root,
-            pdb_paths=pdb_paths1,
-            pdb_codes=pdb_codes1,
-            uniprot_ids=uniprot_ids1,
-            graph_labels=graph_labels1,
-            node_labels=node_labels1,
-            chain_selections=chain_selections1,
-            graphein_config=graphein_config,
-            graph_format_convertor=graph_format_convertor,
-            graph_transformation_funcs=graph_transformation_funcs,
-            pdb_transform=pdb_transform,
-            transform=transform,
-            pre_transform=pre_transform,
-            pre_filter=pre_filter,
-            num_cores=num_cores,
-            af_version=af_version
-        )
-        super().__init__(
-            root,
-            transform=paired_transform,
-            pre_transform=paired_pre_transform,
-            pre_filter=paired_pre_filter
-        )
-
-    @property
-    def raw_file_names(self) -> List[str]:
-        """Names of raw files in the dataset."""
-        raw_file_names: list[str] = []
-        for pdb0, pdb1 in zip(self.__dataset0.raw_file_names, self.__dataset1.raw_file_names):
-            raw_file_names.extend([pdb0, pdb1])
-        return raw_file_names
-
-    @property
-    def processed_file_names(self) -> List[str]:
-        """Names of processed files to look for"""
-        processed_file_names: list[str] = []
-        for pyg0, pyg1 in zip(self.__dataset0.processed_file_names, self.__dataset1.processed_file_names):
-            processed_file_names.extend([pyg0, pyg1])
-        return processed_file_names
-
-    @property
-    def raw_dir(self) -> str:
-        return self.__dataset0.raw_dir  # should be self.__dataset1.raw_dir also taken into account?
-
-    def len(self) -> int:
-        """Returns length of data set (number of structures)."""
-        return len(self.__dataset0)
-
-    def process(self):
-        pass
-
-    def download(self):
-        pass
-
-    def get(self, idx: int) -> Data:
-        """
-       Gets the i-th (before, after) protein graph pair..
-
-        :param idx: Index to retrieve.
-        :type idx: int
-        :return: PyTorch Geometric Data object.
-        """
-        before = self.__dataset0.get(idx)
-        after = self.__dataset1.get(idx)
-
-        return self.pair_data(before, after, global_y=True)
-
-    @staticmethod
-    def pair_data(before: Data, after: Data, global_y: bool = True) -> Data:
-        """
-        Pairs two graphs together in a single ``Data`` instance.
-        The first graph is accessed via ``data.before`` (e.g. ``data.before.x``) and the second via ``data.after``.
-
-        :param before: The first graph.
-        :type before: torch_geometric.data.Data
-        :param after: The second graph.
-        :type after: torch_geometric.data.Data
-        :param global_y: whether to add a global y attribute to the Data object
-
-        :return: The paired graph.
-        """
-        out = Data(y=before.y) if global_y else Data()
-        out.before = before
-        out.after = after
-        return out
-
-
 def create_dataset_pscdb_paired(df: pd.DataFrame, export_path: str, graph_format: str = "pyg",
-                                conversion_verbosity: str = "gnn", store_params: bool = False) -> PSCDBPairedDataset:
+                                conversion_verbosity: str = "gnn", store_params: bool = False) -> PairedProteinGraphDataset:
     if graph_format not in FORMATS:
         raise ValueError(f"Invalid graph format: {graph_format}, it needs to be one of the following: {str(FORMATS)}")
 
@@ -340,7 +175,7 @@ def create_dataset_pscdb_paired(df: pd.DataFrame, export_path: str, graph_format
     converter = GraphFormatConvertor(src_format="nx", dst_format=graph_format, columns=columns)
 
     # Create dataset
-    ds = PSCDBPairedDataset(
+    ds = PairedProteinGraphDataset(
         root=export_path,
         pdb_codes0=pdbs0,
         pdb_codes1=pdbs1,
@@ -635,7 +470,7 @@ def create_dataset_pretrain(pdb_paths: List[str], export_path: str, in_memory: b
 
 
 def load_dataset(path: str, dataset_type: str = "pscdb") -> Union[InMemoryProteinGraphDataset,
-                                                                  ProteinGraphDataset, PSCDBPairedDataset]:
+                                                                  ProteinGraphDataset, PairedProteinGraphDataset]:
     """
     Loads a protein graph cleaned dataset from a directory.
 
@@ -646,7 +481,7 @@ def load_dataset(path: str, dataset_type: str = "pscdb") -> Union[InMemoryProtei
 
     :return: the ProteinGraphDataset, PSCDBPairedGraphDataset or InMemoryProteinGraphDataset object corresponding to the
         dataset.
-    :rtype: Union[InMemoryProteinGraphDataset, ProteinGraphDataset, PSCDBPairedDataset]
+    :rtype: Union[InMemoryProteinGraphDataset, ProteinGraphDataset, PairedProteinGraphDataset]
     """
 
     if dataset_type not in DATASET_TYPES:
@@ -731,8 +566,8 @@ class NodeFeatureFormatter(BaseTransform):
         '''
 
         if self.paired_proteins:
-            self.__format(sample.before)
-            self.__format(sample.after)
+            self.__format(sample.a)
+            self.__format(sample.b)
         else:
             self.__format(sample)
 
@@ -750,5 +585,6 @@ class NodeFeatureFormatter(BaseTransform):
         # Add renamed y column if required
         if "graph_y" in sample:
             sample["y"] = sample["graph_y"]
+
 
 
