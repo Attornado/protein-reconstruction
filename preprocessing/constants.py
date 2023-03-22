@@ -20,7 +20,7 @@ PATH_PDBS_DIR: final = os.path.join(PATH_ALPHAFOLD, "pdbs")
 MOTION_TYPE: final = "motion"
 PDB: final = "pdb"
 PDB_BOUND: final = "pdb_bound"
-USED_COLUMNS: final = {"Free PDB": PDB, "Bound PDB": "pdb_bound", "motion_type": MOTION_TYPE}
+USED_COLUMNS: final = {"Free PDB": PDB, "Bound PDB": PDB_BOUND, "motion_type": MOTION_TYPE}
 OTHER_MOTION_TYPE: final = "other_motion"
 PSCDB_PATH: final = os.path.join(DATA_PATH, "pscdb", "structural_rearrangement_data.csv")
 
