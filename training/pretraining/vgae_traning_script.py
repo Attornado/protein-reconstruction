@@ -2,16 +2,13 @@ import os
 from typing import final
 import torch
 from torch_geometric.loader import DataLoader
-from models.layers import GATConvBlock, SAGEConvBlock, GCNConvBlock
-from preprocessing.constants import PRETRAIN_CLEANED_TRAIN, PRETRAIN_CLEANED_VAL, PRETRAIN_CLEANED_TEST, DATA_PATH
+from models.layers import GCNConvBlock
+from preprocessing.constants import PRETRAIN_CLEANED_TRAIN, PRETRAIN_CLEANED_VAL, DATA_PATH
 from models.pretraining.vgae import VGAEv2, train_vgae, VGEncoder
-from models.pretraining.encoders import RevGATConvEncoder, RevSAGEConvEncoder, ResGCN2ConvEncoder, SimpleGCNEncoder, \
-    RevGCNEncoder
-from preprocessing.dataset import load_dataset
+from models.pretraining.encoders import RevGCNEncoder
+from preprocessing.dataset.dataset_creation import load_dataset
 from torch.optim import Adam, Adadelta
 import torchinfo
-from training.training_tools import EARLY_STOP_PATIENCE
-
 
 BATCH_SIZE: final = 200
 EPOCHS: final = 250

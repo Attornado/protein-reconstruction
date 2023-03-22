@@ -2,10 +2,13 @@ import collections
 import json
 import os
 from typing import Union, List, Optional
+import csv
 import pandas as pd
 from preprocessing.constants import UNIPROTS_KEY, PDBS_KEY, USED_COLUMNS, RANDOM_SEED, TEST_SIZE_PSCDB, \
     VAL_SIZE_PSCDB, PDB, PATHS_KEY, MOTION_COLUMN, FREE_PDB_COLUMN, MOTION_TYPE, OTHER_MOTION_TYPE, \
-    OTHER_MOTION_COLUMN_NAMES, BOUND_PDB_COLUMN, PDB_BOUND
+    OTHER_MOTION_COLUMN_NAMES, BOUND_PDB_COLUMN, PDB_BOUND, N_FOLDS, FOLD_CLASSIFICATION, FOLD_FILE_PREFIX, \
+    FOLD_FILE_EXTENSION, FOLD_CLASS, FOLD_CLASSIFICATION_CSV, ENZYMES_YES, ENZYMES_NO, ENZYMES_CLASSIFICATION_CSV, \
+    ENZYMES_CLASS
 from sklearn.model_selection import train_test_split
 
 
@@ -200,3 +203,47 @@ def read_others_original_format(path: str, val_size: Optional[float] = None, tes
         train_df, val_df, test_df = train_test_validation_split(df, val_size=val_size, test_size=test_size,
                                                                 random_seed=random_seed)
         return train_df, val_df, test_df
+
+
+def create_fold_dataset_csv():
+    # create an empty list to hold the pdb codes and fold_number
+    pdb_fold_pairs = []
+
+    # loop through the file numbers
+    for i in range(N_FOLDS):
+        # open the file
+        filename = FOLD_FILE_PREFIX + str(i) + FOLD_FILE_EXTENSION
+        with open(filename, "r") as f:
+            # read the pdb codes and add them to the list
+            for line in f:
+                pdb_code = line.strip()
+                fold_no = i
+                pair = [pdb_code, fold_no]
+                pdb_fold_pairs.append(pair)
+
+    # create the CSV file
+    with open(FOLD_CLASSIFICATION_CSV, "w", newline="") as f:
+        writer = csv.writer(f)
+        # write the header row
+        writer.writerow([PDB, FOLD_CLASS])
+        # write the data rows
+        for pair in pdb_fold_pairs:
+            writer.writerow(pair)
+
+
+def create_enzymes_dataset_csv():
+    # Open the input files
+    with open(ENZYMES_YES, 'r') as enzymes_file:
+        enzymes = [line.strip() for line in enzymes_file]
+
+    with open(ENZYMES_NO, 'r') as no_enzymes_file:
+        no_enzymes = [line.strip() for line in no_enzymes_file]
+
+    # Combine the lists and create a list of (pdb_code, enzyme) tuples
+    data = [(pdb_code, 'yes') for pdb_code in enzymes] + [(pdb_code, 'no') for pdb_code in no_enzymes]
+
+    # Write the output file
+    with open(ENZYMES_CLASSIFICATION_CSV, 'w', newline='') as output_file:
+        writer = csv.writer(output_file)
+        writer.writerow([PDB, ENZYMES_CLASS])
+        writer.writerows(data)

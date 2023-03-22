@@ -10,8 +10,9 @@ from preprocessing.constants import PSCDB_PATH, PSCDB_CLEANED_TRAIN, PRETRAIN_CL
     VAL_SIZE_PSCDB, TEST_SIZE_PSCDB, VAL_SIZE_PRETRAIN, TEST_SIZE_PRETRAIN, RANDOM_SEED, PSCDB_PDBS_SUFFIX, \
     PATH_PDBS_DIR, PSCDB_CLASS_WEIGHTS, OTHER_MOTION_PROTEINS_ORIGINAL_FORMAT_PATH, PSCDB_PAIRED_CLEANED_VAL, \
     PSCDB_PAIRED_CLEANED_TEST, PSCDB_PAIRED_CLEANED_TRAIN
-from preprocessing.dataset import create_dataset_pscdb, create_dataset_pretrain, load_dataset, \
+from preprocessing.dataset.dataset_creation import create_dataset_pscdb, create_dataset_pretrain, load_dataset, \
     create_dataset_pscdb_paired
+from preprocessing.dataset.paired_dataset import PairedDataLoader
 from preprocessing.utils import pscdb_read, get_uniprot_IDs_and_pdb_codes, train_test_validation_split, \
     get_pdb_paths_pscdb, read_others_original_format
 
@@ -199,76 +200,76 @@ def main():
     print(f"Loaded class weights {class_weights}")
 
     # Create data loader to check if everything's ok
-    dl = DataLoader(ds_cl_train2, batch_size=1, shuffle=True, drop_last=True)
+    dl = PairedDataLoader(ds_cl_train2, batch_size=1, shuffle=True, drop_last=True)
     min_n = 1000000000
     max_n = 0
     n_nodes = []
     y_distribution_train = {}
     for el in iter(dl):
-        if el.before[0].num_nodes < min_n:
-            min_n = el.before[0].num_nodes
-        if el.after[0].num_nodes < min_n:
-            min_n = el.after[0].num_nodes
-        if el.before[0].num_nodes > max_n:
-            max_n = el.before[0].num_nodes
-        if el.after[0].num_nodes > max_n:
-            max_n = el.after[0].num_nodes
-        if int(el.before[0].y) not in y_distribution_train:
-            y_distribution_train[int(el.before[0].y)] = 1
+        if el.a[0].num_nodes < min_n:
+            min_n = el.a[0].num_nodes
+        if el.b[0].num_nodes < min_n:
+            min_n = el.b[0].num_nodes
+        if el.a[0].num_nodes > max_n:
+            max_n = el.a[0].num_nodes
+        if el.b[0].num_nodes > max_n:
+            max_n = el.b[0].num_nodes
+        if int(el.a[0].y) not in y_distribution_train:
+            y_distribution_train[int(el.a[0].y)] = 1
         else:
-            y_distribution_train[int(el.before[0].y)] += 1
-        n_nodes.append(el.before[0].num_nodes)
-        n_nodes.append(el.after[0].num_nodes)
+            y_distribution_train[int(el.a[0].y)] += 1
+        n_nodes.append(el.a[0].num_nodes)
+        n_nodes.append(el.b[0].num_nodes)
     print(len(dl))
     el = next(iter(dl))
-    print(f"Before: {el.before[0]}")
-    print(f"After: {el.after[0]}")
+    print(f"Before: {el.a[0]}")
+    print(f"After: {el.b[0]}")
 
     # Create data loader to check if everything's ok
-    dl = DataLoader(ds_cl_val2, batch_size=1, shuffle=False, drop_last=True)
+    dl = PairedDataLoader(ds_cl_val2, batch_size=1, shuffle=False, drop_last=True)
     y_distribution_val = {}
     for el in iter(dl):
-        if el.before[0].num_nodes < min_n:
-            min_n = el.before[0].num_nodes
-        if el.after[0].num_nodes < min_n:
-            min_n = el.after[0].num_nodes
-        if el.before[0].num_nodes > max_n:
-            max_n = el.before[0].num_nodes
-        if el.after[0].num_nodes > max_n:
-            max_n = el.after[0].num_nodes
-        if int(el.before[0].y) not in y_distribution_val:
-            y_distribution_val[int(el.before[0].y)] = 1
+        if el.a[0].num_nodes < min_n:
+            min_n = el.a[0].num_nodes
+        if el.b[0].num_nodes < min_n:
+            min_n = el.b[0].num_nodes
+        if el.a[0].num_nodes > max_n:
+            max_n = el.a[0].num_nodes
+        if el.b[0].num_nodes > max_n:
+            max_n = el.b[0].num_nodes
+        if int(el.a[0].y) not in y_distribution_val:
+            y_distribution_val[int(el.a[0].y)] = 1
         else:
-            y_distribution_val[int(el.before[0].y)] += 1
-        n_nodes.append(el.before[0].num_nodes)
-        n_nodes.append(el.after[0].num_nodes)
+            y_distribution_val[int(el.a[0].y)] += 1
+        n_nodes.append(el.a[0].num_nodes)
+        n_nodes.append(el.b[0].num_nodes)
     print(len(dl))
     el = next(iter(dl))
-    print(f"Before: {el.before[0]}")
-    print(f"After: {el.after[0]}")
+    print(f"Before: {el.a[0]}")
+    print(f"After: {el.b[0]}")
 
     # Create data loader to check if everything's ok
-    dl = DataLoader(ds_cl_test2, batch_size=1, shuffle=False, drop_last=True)
+    dl = PairedDataLoader(ds_cl_test2, batch_size=1, shuffle=False, drop_last=True)
     y_distribution_test = {}
     for el in iter(dl):
-        if el.before[0].num_nodes < min_n:
-            min_n = el.before[0].num_nodes
-        if el.after[0].num_nodes < min_n:
-            min_n = el.after[0].num_nodes
-        if el.before[0].num_nodes > max_n:
-            max_n = el.before[0].num_nodes
-        if el.after[0].num_nodes > max_n:
-            max_n = el.after[0].num_nodes
-        if int(el.before[0].y) not in y_distribution_test:
-            y_distribution_test[int(el.before[0].y)] = 1
+        if el.a[0].num_nodes < min_n:
+            min_n = el.a[0].num_nodes
+        if el.b[0].num_nodes < min_n:
+            min_n = el.b[0].num_nodes
+        if el.a[0].num_nodes > max_n:
+            max_n = el.a[0].num_nodes
+        if el.b[0].num_nodes > max_n:
+            max_n = el.b[0].num_nodes
+        if int(el.a[0].y) not in y_distribution_test:
+            y_distribution_test[int(el.a[0].y)] = 1
         else:
-            y_distribution_test[int(el.before[0].y)] += 1
-        n_nodes.append(el.before[0].num_nodes)
-        n_nodes.append(el.after[0].num_nodes)
+            y_distribution_test[int(el.a[0].y)] += 1
+        n_nodes.append(el.a[0].num_nodes)
+        n_nodes.append(el.b[0].num_nodes)
     print(len(dl))
     el = next(iter(dl))
-    print(f"Before: {el.before[0]}")
-    print(f"After: {el.after[0]}")
+    print(f"Before: {el.a[0]}")
+    print(f"After: {el.b[0]}")
 
     print(f"Min is: {min_n}")
     print(f"Max is: {max_n}")
@@ -306,7 +307,7 @@ def main():
     print(next(iter(dl)))
 
     ds3 = load_dataset(PSCDB_PAIRED_CLEANED_TRAIN, dataset_type="pscdb_paired")
-    dl = DataLoader(ds3, batch_size=2, shuffle=False, drop_last=True)
+    dl = PairedDataLoader(ds3, batch_size=2, shuffle=False, drop_last=True)
     print(next(iter(dl)))
 
 

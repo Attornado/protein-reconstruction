@@ -36,6 +36,23 @@ FREE_PDB_COLUMN: final = "FreeID"
 BOUND_PDB_COLUMN: final = "BoundID"
 
 
+# Fold classification-related constants
+FOLD_CLASSIFICATION: final = os.path.join(DATA_PATH, "fold")
+FOLD_CLASSIFICATION_CSV: final = os.path.join(DATA_PATH, "fold_classification.csv")
+FOLD_FILE_PREFIX: final = os.path.join(FOLD_CLASSIFICATION, "amino_fold_")
+FOLD_FILE_EXTENSION: final = ".txt"
+N_FOLDS: final = 10
+FOLD_CLASS: final = "fold_class"
+
+
+# enzymes classification-related constants
+ENZYMES_CLASSIFICATION: final = os.path.join(DATA_PATH, "enzymes")
+ENZYMES_CLASSIFICATION_CSV: final = os.path.join(ENZYMES_CLASSIFICATION, "enzymes_classification.csv")
+ENZYMES_YES: final = os.path.join(ENZYMES_CLASSIFICATION, "amino_enzymes.txt")
+ENZYMES_NO: final = os.path.join(ENZYMES_CLASSIFICATION, "amino_no_enzymes.txt")
+ENZYMES_CLASS = "enzyme"
+
+
 # Cleaned dataset-related constants
 CLEANED_DATA: final = os.path.join(DATA_PATH, "cleaned")
 
@@ -57,11 +74,24 @@ PSCDB_PAIRED_CLEANED_VAL: final = os.path.join(PSCDB_PAIRED_CLEANED, "validation
 PSCDB_PAIRED_CLEANED_TEST: final = os.path.join(PSCDB_PAIRED_CLEANED, "test")
 PSCDB_PAIRED_CLASS_WEIGHTS: final = os.path.join(PSCDB_PAIRED_CLEANED, "class_weights.pt")
 
-
 PSCDB_PDBS_SUFFIX: final = "raw"
 PARAMS_DIR_SUFFIX: final = "params"
 PARAMS_CSV_SUFFIX: final = "param_df.csv"
 PARAMS_JSON_SUFFIX: final = "params.json"
+
+
+FOLD_CLASSIFICATION_CLEANED: final = os.path.join(CLEANED_DATA, "fold_classification")
+FOLD_CLASSIFICATION_CLEANED_TRAIN: final = os.path.join(FOLD_CLASSIFICATION_CLEANED, "train")
+FOLD_CLASSIFICATION_CLEANED_VAL: final = os.path.join(FOLD_CLASSIFICATION_CLEANED, "validation")
+FOLD_CLASSIFICATION_CLEANED_TEST: final = os.path.join(FOLD_CLASSIFICATION_CLEANED, "test")
+FOLD_CLASSIFICATION_CLASS_WEIGHTS: final = os.path.join(FOLD_CLASSIFICATION_CLEANED, "class_weights.pt")
+
+
+ENZYMES_CLEANED: final = os.path.join(CLEANED_DATA, "enzymes")
+ENZYMES_CLEANED_TRAIN: final = os.path.join(ENZYMES_CLEANED, "train")
+ENZYMES_CLEANED_VAL: final = os.path.join(ENZYMES_CLEANED, "validation")
+ENZYMES_CLEANED_TEST: final = os.path.join(ENZYMES_CLEANED, "test")
+ENZYMES_CLASS_WEIGHTS: final = os.path.join(ENZYMES_CLEANED, "class_weights.pt")
 
 
 # Randomness-related constants
@@ -71,6 +101,13 @@ RANDOM_SEED: final = 42
 # Split-related constants
 VAL_SIZE_PSCDB: final = 0.15
 TEST_SIZE_PSCDB: final = 0.15
+
+VAL_SIZE_ENZYMES: final = 0.15
+TEST_SIZE_ENZYMES: final = 0.15
+
+VAL_SIZE_FOLD: final = 0.15
+TEST_SIZE_FOLD: final = 0.15
+
 VAL_SIZE_PRETRAIN: final = 0.20
 TEST_SIZE_PRETRAIN: final = 0.20
 
