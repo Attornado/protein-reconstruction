@@ -1,4 +1,4 @@
-from typing import Optional, List, Callable, Union
+from typing import Optional, List, Callable, Union, final
 import torch
 from graphein.ml import GraphFormatConvertor, ProteinGraphDataset
 from graphein.protein import ProteinGraphConfig
@@ -10,6 +10,9 @@ from torch_geometric.loader.dataloader import Collater
 
 class PairedData(Data):
 
+    __A_KEY: final = 'a'
+    __B_KEY: final = 'b'
+
     def __init__(self, a: Data, b: Data, global_y: Optional[torch.Tensor] = None, **kwargs):
         """
         Pairs two graphs together in a single ``Data`` instance.
@@ -20,12 +23,41 @@ class PairedData(Data):
         :param b: The second graph.
         :type b: torch_geometric.data.Data
         :param global_y: global y value for the pair data (optional, default None)
+        :param **kwargs: Additional (optional) attributes
 
         :return: The paired graph.
         """
         super().__init__(x=None, edge_index=None, edge_attr=None, y=global_y, pos=None, **kwargs)
         self.a = a
         self.b = b
+
+    @property
+    def a(self) -> Data:
+        """
+        Gets the first graph of the pair.
+        """
+        return self[self.__A_KEY]
+
+    @a.setter
+    def a(self, a: Data):
+        """
+        Sets the first graph of the pair.
+        """
+        self[self.__A_KEY] = a
+
+    @property
+    def b(self) -> Data:
+        """
+        Gets the second graph of the pair.
+        """
+        return self[self.__B_KEY]
+
+    @b.setter
+    def b(self, a: Data):
+        """
+        Sets the second graph of the pair.
+        """
+        self[self.__B_KEY] = a
 
 
 class PairedProteinGraphDataset(Dataset):
