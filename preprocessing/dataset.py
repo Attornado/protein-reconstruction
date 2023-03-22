@@ -44,7 +44,7 @@ DATASET_NAME_PSCDB: final = "pscdb_cleaned"
 DATASET_NAME_PRETRAINED: final = "pretrain_cleaned"
 FORMATS: final = frozenset(["pyg", "dgl"])
 VERBOSITIES_CONVERSION: final = frozenset(gmlc.SUPPORTED_VERBOSITY)
-DATASET_TYPES: final = frozenset(["pscdb", "pretrain"])
+DATASET_TYPES: final = frozenset(["pscdb", "pscdb_paired", "pretrain"])
 
 # Local-only constants
 __DATAFRAME_PARAM_NAME: final = "df_param_name"
@@ -121,6 +121,9 @@ class PSCDBPairedDataset(Dataset):
                  ),
                  graph_transformation_funcs: Optional[List[Callable]] = None,
                  pdb_transform: Optional[List[Callable]] = None,
+                 paired_transform: Optional[Callable] = None,
+                 paired_pre_transform: Optional[Callable] = None,
+                 paired_pre_filter: Optional[Callable] = None,
                  transform: Optional[Callable] = None,
                  pre_transform: Optional[Callable] = None,
                  pre_filter: Optional[Callable] = None,
@@ -192,25 +195,26 @@ class PSCDBPairedDataset(Dataset):
         )
         super().__init__(
             root,
-            transform=transform,
-            pre_transform=pre_transform,
-            pre_filter=pre_filter,
+            transform=paired_transform,
+            pre_transform=paired_pre_transform,
+            pre_filter=paired_pre_filter
         )
 
     @property
-    def raw_file_names(self) -> List[tuple[str, str]]:
+    def raw_file_names(self) -> List[str]:
         """Names of raw files in the dataset."""
-        return [
-            (pdb0, pdb1) for pdb0, pdb1 in zip(self.__dataset0.raw_file_names, self.__dataset1.raw_file_names)
-        ]
+        raw_file_names: list[str] = []
+        for pdb0, pdb1 in zip(self.__dataset0.raw_file_names, self.__dataset1.raw_file_names):
+            raw_file_names.extend([pdb0, pdb1])
+        return raw_file_names
 
     @property
-    def processed_file_names(self) -> List[tuple[str, str]]:
+    def processed_file_names(self) -> List[str]:
         """Names of processed files to look for"""
-        return [
-            (pyg0, pyg1)
-            for pyg0, pyg1 in zip(self.__dataset0.processed_file_names, self.__dataset1.processed_file_names)
-        ]
+        processed_file_names: list[str] = []
+        for pyg0, pyg1 in zip(self.__dataset0.processed_file_names, self.__dataset1.processed_file_names):
+            processed_file_names.extend([pyg0, pyg1])
+        return processed_file_names
 
     @property
     def raw_dir(self) -> str:
@@ -237,10 +241,10 @@ class PSCDBPairedDataset(Dataset):
         before = self.__dataset0.get(idx)
         after = self.__dataset1.get(idx)
 
-        return self.pair_data(before, after)
+        return self.pair_data(before, after, global_y=True)
 
     @staticmethod
-    def pair_data(before: Data, after: Data) -> Data:
+    def pair_data(before: Data, after: Data, global_y: bool = True) -> Data:
         """
         Pairs two graphs together in a single ``Data`` instance.
         The first graph is accessed via ``data.before`` (e.g. ``data.before.x``) and the second via ``data.after``.
@@ -249,10 +253,11 @@ class PSCDBPairedDataset(Dataset):
         :type before: torch_geometric.data.Data
         :param after: The second graph.
         :type after: torch_geometric.data.Data
+        :param global_y: whether to add a global y attribute to the Data object
 
         :return: The paired graph.
         """
-        out = Data()
+        out = Data(y=before.y) if global_y else Data()
         out.before = before
         out.after = after
         return out
@@ -343,6 +348,7 @@ def create_dataset_pscdb_paired(df: pd.DataFrame, export_path: str, graph_format
         graph_format_convertor=converter,
         graph_labels0=y,
         graph_labels1=y,
+        paired_transform=NodeFeatureFormatter(list(NODE_METADATA_FUNCTIONS.keys()), paired_proteins=True),
         transform=NodeFeatureFormatter(list(NODE_METADATA_FUNCTIONS.keys())),
         num_cores=NUM_CORES
     )
@@ -662,7 +668,7 @@ def load_dataset(path: str, dataset_type: str = "pscdb") -> Union[InMemoryProtei
 
 
 class NodeFeatureFormatter(BaseTransform):
-    def __init__(self, feature_columns: Optional[list[str]] = None):
+    def __init__(self, feature_columns: Optional[list[str]] = None, paired_proteins: bool = False):
         """
         Represents a transformation to be applied on the node features, optionally given a list of additional features
         to combine with coords. It converts all the node features into tensors and concat them into a single "x" tensor.
@@ -670,9 +676,13 @@ class NodeFeatureFormatter(BaseTransform):
         :param feature_columns: a list of strings that represent the names of the additional node features to be used in
             the model (default: None).
         :type feature_columns: Optional[list[str]]
+        :param paired_proteins: a boolean indicating whether the transformation is going to be applied on paired
+            proteins (default: False).
+        :type paired_proteins: bool
         """
         super(NodeFeatureFormatter, self).__init__()
         self.__feature_columns = feature_columns if feature_columns is not None else []
+        self.__paired_proteins: bool = paired_proteins
 
     @property
     def feature_columns(self) -> list[str]:
@@ -682,6 +692,10 @@ class NodeFeatureFormatter(BaseTransform):
         :return: a list of strings representing the additional node features.
         """
         return self.__feature_columns
+
+    @property
+    def paired_proteins(self) -> bool:
+        return self.__paired_proteins
 
     @feature_columns.setter
     def feature_columns(self, feature_columns: list[str]):
@@ -702,6 +716,7 @@ class NodeFeatureFormatter(BaseTransform):
         :return: A dictionary containing the node features and the target variable.
         """
 
+        '''
         # Convert numpy arrays to tensors for each node feature column, and create combined node feature tensor
         if not isinstance(sample["coords"], torch.Tensor):
             sample["coords"] = torch.Tensor(sample["coords"][0])
@@ -713,7 +728,27 @@ class NodeFeatureFormatter(BaseTransform):
         # Add renamed y column if required
         if "graph_y" in sample:
             sample["y"] = sample["graph_y"]
+        '''
+
+        if self.paired_proteins:
+            self.__format(sample.before)
+            self.__format(sample.after)
+        else:
+            self.__format(sample)
 
         return sample
+
+    def __format(self, sample: Union[Data, HeteroData]):
+        # Convert numpy arrays to tensors for each node feature column, and create combined node feature tensor
+        if not isinstance(sample["coords"], torch.Tensor):
+            sample["coords"] = torch.Tensor(sample["coords"][0])
+        sample["x"] = sample["coords"]
+        for feature_col in self.feature_columns:
+            sample[feature_col] = torch.Tensor(sample[feature_col])  # convert to tensor
+            sample["x"] = torch.cat([sample["x"], sample[feature_col]], dim=-1)  # combine node features
+
+        # Add renamed y column if required
+        if "graph_y" in sample:
+            sample["y"] = sample["graph_y"]
 
 
