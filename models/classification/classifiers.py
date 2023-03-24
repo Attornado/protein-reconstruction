@@ -127,7 +127,7 @@ class GraphClassifier(SerializableModule):
         n_classes = self.dim_target
 
         # Get predictions
-        y_hat = self(x, edge_index, batch_index, *args, **kwargs)
+        y_hat = self(x.float(), edge_index, batch_index, *args, **kwargs)
 
         # Compute loss
         loss = self.loss(y_hat=y_hat, y=y, criterion=criterion)
@@ -152,7 +152,7 @@ class GraphClassifier(SerializableModule):
 
         # If predictions are not given, compute them using the model
         if y_hat is None:
-            y_hat = self(x, edge_index, batch_index, *args, **kwargs)
+            y_hat = self(x.float(), edge_index, batch_index, *args, **kwargs)
 
         # Compute loss with given criterion
         loss = criterion(y, y_hat)
@@ -194,7 +194,7 @@ def train_step_classifier(model: GraphClassifier, train_data: DataLoader, optimi
         optimizer.zero_grad()
 
         # Encoder output
-        y_hat = model(data.x, data.edge_index, data.batch)
+        y_hat = model(data.x.float(), data.edge_index, data.batch)
 
         loss = model.loss(y=data.y, y_hat=y_hat, criterion=criterion, additional_terms=None)
 
@@ -268,7 +268,8 @@ def test_step_classifier(model: GraphClassifier, val_data: DataLoader, device: t
 def train_classifier(model: GraphClassifier, train_data: DataLoader, val_data: DataLoader, epochs: int, optimizer,
                      experiment_path: str, experiment_name: str, early_stopping_patience: int = EARLY_STOP_PATIENCE,
                      early_stopping_delta: float = 0, top_k: int = 3, logger: Optional[Logger] = None,
-                     criterion: ClassificationLoss = MulticlassClassificationLoss()) -> torch.nn.Module:
+                     criterion: ClassificationLoss = MulticlassClassificationLoss(),
+                     use_tensorboard_log: bool = False) -> (torch.nn.Module, dict):
     # TODO: test this
     # Move model to device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -278,7 +279,8 @@ def train_classifier(model: GraphClassifier, train_data: DataLoader, val_data: D
     os.makedirs(experiment_path, exist_ok=True)  # create experiment directory if it doesn't exist
 
     # Instantiate the summary writer
-    writer = SummaryWriter(f'{experiment_path}_{experiment_name}_{epochs}_epochs')
+    if use_tensorboard_log:
+        writer = SummaryWriter(f'{experiment_path}_{experiment_name}_{epochs}_epochs')
 
     # Early-stopping monitor
     checkpoint_path = os.path.join(f"{experiment_path}", "checkpoint.pt")
@@ -286,7 +288,8 @@ def train_classifier(model: GraphClassifier, train_data: DataLoader, val_data: D
         patience=early_stopping_patience,
         verbose=True,
         delta=early_stopping_delta,
-        path=checkpoint_path
+        path=checkpoint_path,
+        trace_func=logger.log
     )
 
     # Metric history trace object
@@ -341,13 +344,14 @@ def train_classifier(model: GraphClassifier, train_data: DataLoader, val_data: D
             )
 
         # Tensorboard state update
-        writer.add_scalar('train_loss', train_loss, epoch)
-        writer.add_scalar('val_loss', val_loss, epoch)
-        writer.add_scalar('avg_precision', avg_precision, epoch)
-        writer.add_scalar('avg_recall', avg_recall, epoch)
-        writer.add_scalar('avg_accuracy', avg_accuracy, epoch)
-        writer.add_scalar(f'avg_top{top_k}_accuracy', avg_topk_accuracy, epoch)
-        writer.add_scalar('avg_f1', avg_f1, epoch)
+        if use_tensorboard_log:
+            writer.add_scalar('train_loss', train_loss, epoch)
+            writer.add_scalar('val_loss', val_loss, epoch)
+            writer.add_scalar('avg_precision', avg_precision, epoch)
+            writer.add_scalar('avg_recall', avg_recall, epoch)
+            writer.add_scalar('avg_accuracy', avg_accuracy, epoch)
+            writer.add_scalar(f'avg_top{top_k}_accuracy', avg_topk_accuracy, epoch)
+            writer.add_scalar('avg_f1', avg_f1, epoch)
 
         # Check for early-stopping stuff
         monitor(val_loss, model)
@@ -409,4 +413,20 @@ def train_classifier(model: GraphClassifier, train_data: DataLoader, val_data: D
 
     # Load best model
     model.load_state_dict(torch.load(checkpoint_path))
-    return model
+
+    avg_precision, avg_recall, avg_accuracy, avg_topk_accuracy, avg_f1, val_loss = test_step_classifier(
+        model=model,
+        val_data=val_data,
+        device=device,
+        top_k=top_k,
+        criterion=criterion
+    )
+    metrics = {
+        "precision": avg_precision,
+        "recall": avg_recall,
+        "accuracy": avg_accuracy,
+        "avg_topk_accuracy": avg_topk_accuracy,
+        "f1": avg_f1,
+        "val_loss": val_loss
+    }
+    return model, metrics

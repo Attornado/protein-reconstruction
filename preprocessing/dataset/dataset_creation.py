@@ -341,9 +341,10 @@ def create_dataset_pscdb(df: pd.DataFrame, export_path: str, in_memory: bool = F
     return ds
 
 
-def create_dataset_fold_classification(df: pd.DataFrame, export_path: str, in_memory: bool = False, graph_format: str = "pyg",
-                           conversion_verbosity: str = "gnn", store_params: bool = False) -> \
-        Union[InMemoryProteinGraphDataset, ProteinGraphDataset]:
+def create_dataset_fold_classification(df: pd.DataFrame, export_path: str, in_memory: bool = False,
+                                       graph_format: str = "pyg", conversion_verbosity: str = "gnn",
+                                       store_params: bool = False) -> Union[InMemoryProteinGraphDataset,
+                                                                            ProteinGraphDataset]:
     """
     Takes a dataframe, extracts the PDB codes and the labels, creates a graphein config, a graph format converter and a
     dataset object.
