@@ -11,9 +11,9 @@ from preprocessing.dataset.dataset_creation import load_dataset
 from torch.optim import Adam, Adadelta
 import torchinfo
 
-BATCH_SIZE: final = 200
-EPOCHS: final = 1000
-EARLY_STOPPING_PATIENCE: final = 50
+BATCH_SIZE: final = 100
+EPOCHS: final = 2000
+EARLY_STOPPING_PATIENCE: final = 150
 EXPERIMENT_NAME: final = 'sage_test0'
 EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "classification", "sage")
 RESTORE_CHECKPOINT: final = False
@@ -38,8 +38,8 @@ def main():
     optim = "adam"
 
     grid_values = {
-        'num_layers': [3, 5, 7, 8, 9, 10],
-        'dim_embedding': [32, 64, 128, 256],
+        'num_layers': [3, 5, 7],
+        'dim_embedding': [16, 32, 64, 128, 256],
         'aggregation': ["sum", "mean", "max"],
         'learning_rate': [0.01, 0.001, 0.0001, 0.00001, 0.000001]
     }
@@ -52,7 +52,7 @@ def main():
 
     try:
         path = os.path.join(EXPERIMENT_PATH, EXPERIMENT_NAME, "best_acc.pt")
-        best_model_acc = torch.load(path)["best_acc"]
+        best_model_acc = torch.load(path)["best_accuracy"]
     except FileNotFoundError:
         best_model_acc = -1
 
@@ -64,87 +64,85 @@ def main():
 
     for n in grid_values['num_layers']:
         for e in grid_values['dim_embedding']:
-            for d in grid_values['dense_dim']:
-                for a in grid_values['aggregation']:
-                    for lr in grid_values['learning_rate']:
-                        config = {
-                            'num_layers': n,
-                            'dim_embedding': e,
-                            'dense_dim': d,
-                            'aggregation': a,
-                        }
+            for a in grid_values['aggregation']:
+                for lr in grid_values['learning_rate']:
+                    config = {
+                        'num_layers': n,
+                        'dim_embedding': e,
+                        'aggregation': a,
+                    }
 
-                        learning_rate = lr
-                        sage = SAGEClassifier(dim_features=in_channels, dim_target=n_classes, config=config)
+                    learning_rate = lr
+                    sage = SAGEClassifier(dim_features=in_channels, dim_target=n_classes, config=config)
 
-                        if l2 > 0:
-                            optimizer = Adam(sage.parameters(), lr=learning_rate, weight_decay=l2)
-                        elif optim == "adam":
-                            optimizer = Adam(sage.parameters(), lr=learning_rate)
-                        else:
-                            optimizer = Adadelta(sage.parameters())
+                    if l2 > 0:
+                        optimizer = Adam(sage.parameters(), lr=learning_rate, weight_decay=l2)
+                    elif optim == "adam":
+                        optimizer = Adam(sage.parameters(), lr=learning_rate)
+                    else:
+                        optimizer = Adadelta(sage.parameters())
 
-                        conf_count += 1
-                        full_experiment_path = os.path.join(EXPERIMENT_PATH, EXPERIMENT_NAME, f"n_{conf_count}")
-                        checkpoint_path = os.path.join(full_experiment_path, "checkpoint.pt")
-                        full_state_dict_path = os.path.join(full_experiment_path, "state_dict.pt")
-                        if RESTORE_CHECKPOINT and os.path.exists(checkpoint_path):
-                            print("Checkpoint found, loading state dict from checkpoint...")
-                            state_dict = torch.load(checkpoint_path)
-                            sage.load_state_dict(state_dict)
-                            print("State dict loaded.")
-                        elif RESTORE_CHECKPOINT and os.path.exists(full_state_dict_path):
-                            print("Final state dict found, loading state dict...")
-                            state_dict = torch.load(full_state_dict_path)
-                            sage.load_state_dict(state_dict)
-                            print("State dict loaded.")
+                    conf_count += 1
+                    full_experiment_path = os.path.join(EXPERIMENT_PATH, EXPERIMENT_NAME, f"n_{conf_count}")
+                    checkpoint_path = os.path.join(full_experiment_path, "checkpoint.pt")
+                    full_state_dict_path = os.path.join(full_experiment_path, "state_dict.pt")
+                    if RESTORE_CHECKPOINT and os.path.exists(checkpoint_path):
+                        print("Checkpoint found, loading state dict from checkpoint...")
+                        state_dict = torch.load(checkpoint_path)
+                        sage.load_state_dict(state_dict)
+                        print("State dict loaded.")
+                    elif RESTORE_CHECKPOINT and os.path.exists(full_state_dict_path):
+                        print("Final state dict found, loading state dict...")
+                        state_dict = torch.load(full_state_dict_path)
+                        sage.load_state_dict(state_dict)
+                        print("State dict loaded.")
 
-                        print(sage)
-                        print(torchinfo.summary(sage, depth=5))
+                    print(sage)
+                    print(torchinfo.summary(sage, depth=5))
 
-                        full_experiment_path = os.path.join(EXPERIMENT_PATH, EXPERIMENT_NAME, f"n_{conf_count}")
-                        logger = Logger(filepath=os.path.join(full_experiment_path, "trainlog.txt"), mode="a")
-                        if not USE_CLASS_WEIGHTS:
-                            class_weights = None  # set class weights to None if not use class weights is selected
-                        else:
-                            class_weights = class_weights.to(
-                                torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-                            )
-                        logger.log(f"Launching training for experiment GIN with config: \n {config} with learning rate "
-                                   f"{lr}, \n stored in "
-                                   f"{full_experiment_path}...")
-
-                        model, metrics = train_classifier(
-                            sage,
-                            train_data=dl_train,
-                            val_data=dl_val,
-                            epochs=EPOCHS,
-                            optimizer=optimizer,
-                            experiment_path=EXPERIMENT_PATH,
-                            experiment_name=os.path.join(EXPERIMENT_NAME, f"n_{conf_count}"),
-                            early_stopping_patience=EARLY_STOPPING_PATIENCE,
-                            criterion=MulticlassClassificationLoss(weights=class_weights,
-                                                                   label_smoothing=LABEL_SMOOTHING),
-                            logger=logger
+                    full_experiment_path = os.path.join(EXPERIMENT_PATH, EXPERIMENT_NAME, f"n_{conf_count}")
+                    logger = Logger(filepath=os.path.join(full_experiment_path, "trainlog.txt"), mode="a")
+                    if not USE_CLASS_WEIGHTS:
+                        class_weights = None  # set class weights to None if not use class weights is selected
+                    else:
+                        class_weights = class_weights.to(
+                            torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
                         )
+                    logger.log(f"Launching training for experiment GIN with config: \n {config} with learning rate "
+                               f"{lr}, \n stored in "
+                               f"{full_experiment_path}...")
 
-                        if best_model_acc < metrics['accuracy']:
-                            full_experiment_path = os.path.join(EXPERIMENT_PATH, EXPERIMENT_NAME)
-                            logger = Logger(filepath=os.path.join(full_experiment_path, "trainlog.txt"), mode="a")
-                            logger.log(f"Found better model than {best_model_acc} acc, with accuracy "
-                                       f"{metrics['accuracy']} acc, saving it in best dir")
-                            best_model_acc = metrics['accuracy']
-                            best_conf = config
-                            best_lr = lr
-                            constructor_params = model.serialize_constructor_params()
-                            state_dict = model.state_dict()
-                            torch.save(state_dict, os.path.join(full_experiment_path, "state_dict.pt"))
-                            torch.save(constructor_params, os.path.join(full_experiment_path, "constructor_params.pt"))
-                            torch.save({"best_accuracy": best_model_acc},
-                                       os.path.join(full_experiment_path, "best_acc.pt"))
-                            logger.log(f"Model with lr {lr} and config {config} \n trained and stored to "
-                                       f" {full_experiment_path}.")
-                        del model
+                    model, metrics = train_classifier(
+                        sage,
+                        train_data=dl_train,
+                        val_data=dl_val,
+                        epochs=EPOCHS,
+                        optimizer=optimizer,
+                        experiment_path=EXPERIMENT_PATH,
+                        experiment_name=os.path.join(EXPERIMENT_NAME, f"n_{conf_count}"),
+                        early_stopping_patience=EARLY_STOPPING_PATIENCE,
+                        criterion=MulticlassClassificationLoss(weights=class_weights,
+                                                               label_smoothing=LABEL_SMOOTHING),
+                        logger=logger
+                    )
+
+                    if best_model_acc < metrics['accuracy']:
+                        full_experiment_path = os.path.join(EXPERIMENT_PATH, EXPERIMENT_NAME)
+                        logger = Logger(filepath=os.path.join(full_experiment_path, "trainlog.txt"), mode="a")
+                        logger.log(f"Found better model than {best_model_acc} acc, with accuracy "
+                                   f"{metrics['accuracy']} acc, saving it in best dir")
+                        best_model_acc = metrics['accuracy']
+                        best_conf = config
+                        best_lr = lr
+                        constructor_params = model.serialize_constructor_params()
+                        state_dict = model.state_dict()
+                        torch.save(state_dict, os.path.join(full_experiment_path, "state_dict.pt"))
+                        torch.save(constructor_params, os.path.join(full_experiment_path, "constructor_params.pt"))
+                        torch.save({"best_accuracy": best_model_acc},
+                                   os.path.join(full_experiment_path, "best_acc.pt"))
+                        logger.log(f"Model with lr {lr} and config {config} \n trained and stored to "
+                                   f" {full_experiment_path}.")
+                    del model
 
     '''
     sage = SAGEClassifier(dim_features=in_channels, dim_target=n_classes, config=config)

@@ -12,7 +12,7 @@ from torch.optim import Adam, Adadelta
 import torchinfo
 
 
-BATCH_SIZE: final = 200
+BATCH_SIZE: final = 50
 EPOCHS: final = 1000
 EARLY_STOPPING_PATIENCE: final = 100
 EXPERIMENT_NAME: final = 'dgcnn_test10'
@@ -45,9 +45,9 @@ def main():
         "k": 0.9
     }
     grid_values = {
-        'num_layers': [2, 3, 4, 7, 10],
-        'embedding_dim': [16, 32, 64, 128, 256, 512],
-        'dense_dim': [64, 128, 256, 512],
+        'num_layers': [2, 3, 4, 5],  # there was also 2
+        'embedding_dim': [16, 32, 64, 128, 256],
+        'dense_dim': [64, 128, 256],
         'k': [0.6, 0.9],
         'learning_rate': [0.0001, 0.01, 0.00001, 0.001, 0.000001],
     }
@@ -61,7 +61,7 @@ def main():
     print(f"Loaded best_model_acc {best_model_acc}")
     best_conf = None
     best_lr = None
-    conf_count = 0
+    conf_count = 213
 
     for n in grid_values['num_layers']:
         for e in grid_values['embedding_dim']:

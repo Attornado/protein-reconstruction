@@ -14,7 +14,7 @@ import torchinfo
 BATCH_SIZE: final = 20
 EPOCHS: final = 3000
 EARLY_STOPPING_PATIENCE: final = 200
-EXPERIMENT_NAME: final = 'diffpool_test7'
+EXPERIMENT_NAME: final = 'diffpool_test8'
 EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "classification", "diffpool")
 RESTORE_CHECKPOINT: final = True
 USE_CLASS_WEIGHTS: final = True
@@ -31,11 +31,11 @@ def main():
     # dl_test = DataLoader(ds_test, batch_size=BATCH_SIZE, shuffle=True)
 
     class_weights = torch.load(PSCDB_CLASS_WEIGHTS)
-    in_channels = 30
+    in_channels = 10
     n_classes = len(class_weights)
     l2 = 0.0  # try 5e-4
     learning_rate = 0.00001  # try 0.00001, 0.0001, 0.001
-    optim = "adadelta"
+    optim = "adam"
     config = {
         "num_layers": 2,
         'dim_embedding': 128,
@@ -74,10 +74,11 @@ def main():
                             'dim_embedding': e,
                             'gnn_dim_hidden': g,
                             'dim_embedding_MLP': d,
+                            "max_num_nodes": 3787
                         }
 
                         learning_rate = lr
-                        sage =DiffPool(dim_features=in_channels, dim_target=n_classes, config=config)
+                        sage = DiffPool(dim_features=in_channels, dim_target=n_classes, config=config)
 
                         if l2 > 0:
                             optimizer = Adam(sage.parameters(), lr=learning_rate, weight_decay=l2)
@@ -142,7 +143,7 @@ def main():
                             state_dict = model.state_dict()
                             torch.save(state_dict, os.path.join(full_experiment_path, "state_dict.pt"))
                             torch.save(constructor_params, os.path.join(full_experiment_path, "constructor_params.pt"))
-                            torch.save({"best_accuracy": best_model_acc},
+                            torch.save({"best_acc": best_model_acc},
                                        os.path.join(full_experiment_path, "best_acc.pt"))
                             logger.log(f"Model with lr {lr} and config {config} \n trained and stored to "
                                        f" {full_experiment_path}.")
