@@ -12,10 +12,10 @@ from torch.optim import Adam, Adadelta
 import torchinfo
 
 
-BATCH_SIZE: final = 50
+BATCH_SIZE: final = 25
 EPOCHS: final = 2000
 EARLY_STOPPING_PATIENCE: final = 300
-EXPERIMENT_NAME: final = 'pscdb_baseline_test3'
+EXPERIMENT_NAME: final = 'pscdb_baseline_test4'
 EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "classification", "pscdb_baseline")
 RESTORE_CHECKPOINT: final = False
 USE_CLASS_WEIGHTS: final = True
@@ -60,8 +60,8 @@ def main():
 
     grid_values = {
         'dropout': [0.1, 0.2, 0.5],
-        "model_name": [GCN_MODEL_TYPE, GAT_MODEL_TYPE, SAGE_MODEL_TYPE],
-        'hidden_dim': [8, 16, 32, 64, 100, 150],
+        "model_name": [SAGE_MODEL_TYPE, GAT_MODEL_TYPE],  # had GCN_MODEL_TYPE, GAT_MODEL_TYPE
+        'hidden_dim': [8, 16, 32, 64, 128],
         'n_heads': 32,
         "learning_rate": [0.01, 0.001, 0.0001, 0.00001, 0.000001]
     }
@@ -144,7 +144,7 @@ def main():
                         state_dict = model.state_dict()
                         torch.save(state_dict, os.path.join(full_experiment_path, "state_dict.pt"))
                         torch.save(constructor_params, os.path.join(full_experiment_path, "constructor_params.pt"))
-                        torch.save({"best_accuracy": best_model_acc},
+                        torch.save({"best_acc": best_model_acc},
                                    os.path.join(full_experiment_path, "best_acc.pt"))
                         logger.log(f"Model with lr {lr} and config {config} \n trained and stored to "
                                    f" {full_experiment_path}.")

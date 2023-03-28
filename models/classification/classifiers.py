@@ -237,20 +237,20 @@ def test_step_classifier(model: GraphClassifier, val_data: DataLoader, device: t
         data = data.to(device)
 
         if use_edge_weight and use_edge_attr:
-            loss, acc, top_k_acc, prec, rec, f1 = model.test(x=data.x, edge_index=data.edge_index, y=data.y,
+            loss, acc, top_k_acc, prec, rec, f1 = model.test(x=data.x.float(), edge_index=data.edge_index, y=data.y,
                                                              batch_index=data.batch, criterion=criterion, top_k=top_k,
                                                              edge_weight=data.edge_weight, edge_attr=data.edge_attr)
         elif use_edge_attr:
 
-            loss, acc, top_k_acc, prec, rec, f1 = model.test(x=data.x, edge_index=data.edge_index, y=data.y,
+            loss, acc, top_k_acc, prec, rec, f1 = model.test(x=data.x.float(), edge_index=data.edge_index, y=data.y,
                                                              batch_index=data.batch, criterion=criterion, top_k=top_k,
                                                              edge_attr=data.edge_attr)
         elif use_edge_weight:
-            loss, acc, top_k_acc, prec, rec, f1 = model.test(x=data.x, edge_index=data.edge_index, y=data.y,
+            loss, acc, top_k_acc, prec, rec, f1 = model.test(x=data.x.float(), edge_index=data.edge_index, y=data.y,
                                                              batch_index=data.batch, criterion=criterion, top_k=top_k,
                                                              edge_weight=data.edge_weight)
         else:
-            loss, acc, top_k_acc, prec, rec, f1 = model.test(x=data.x, edge_index=data.edge_index, y=data.y,
+            loss, acc, top_k_acc, prec, rec, f1 = model.test(x=data.x.float(), edge_index=data.edge_index, y=data.y,
                                                              batch_index=data.batch, criterion=criterion, top_k=top_k)
 
         running_val_loss = running_val_loss + 1 / steps * (loss - running_val_loss)

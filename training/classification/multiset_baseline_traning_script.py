@@ -13,7 +13,7 @@ import torchinfo
 
 
 BATCH_SIZE: final = 200
-EPOCHS: final = 5000
+EPOCHS: final = 10000
 EARLY_STOPPING_PATIENCE: final = 500
 EXPERIMENT_NAME: final = 'multiset_test0'
 EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "classification", "multiset")
@@ -43,7 +43,7 @@ def main():
 
     try:
         path = os.path.join(EXPERIMENT_PATH, EXPERIMENT_NAME, "best_acc.pt")
-        best_model_acc = torch.load(path)["best_acc"]
+        best_model_acc = torch.load(path)["best_accuracy"]
     except FileNotFoundError:
         best_model_acc = -1
 
@@ -62,7 +62,6 @@ def main():
         for lr in grid_values['learning_rate']:
             config = {
                 'hidden_units': h,  # try 10, 32, 64, 50, 100, 200
-                'n_heads': 32
             }
 
             learning_rate = lr
