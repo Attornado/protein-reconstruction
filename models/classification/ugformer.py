@@ -1,4 +1,4 @@
-from typing import final
+from typing import final, Optional
 import einops
 import torch
 import torch.nn as nn
@@ -25,12 +25,14 @@ class UGFormerV2(GraphClassifier):
                  n_self_att_layers: int,
                  n_layers: int,
                  n_head: int,
-                 dropout: int,
+                 dropout: float,
                  dim_target: int,
+                 embedding_size: Optional[int] = None,
                  conv_type: str = GCN,
                  **conv_kwargs):
         config = {
             "hidden_size": hidden_size,
+            "embedding_size": embedding_size,
             "n_self_att_layers": n_self_att_layers,
             "n_layers": n_layers,
             "n_head": n_head,
@@ -43,11 +45,13 @@ class UGFormerV2(GraphClassifier):
         # Each layer consists of a number of self-attention layers
         # Attention and convolution layers
         self.ug_form_layers = torch.nn.ModuleList()
+        self._projection = None if embedding_size is None else Linear(in_channels=dim_features,
+                                                                      out_channels=embedding_size)
         self.layers = torch.nn.ModuleList()
         for _layer in range(self.n_layers):
             encoder_layers = TransformerEncoderLayer(
-                d_model=self.feature_dim_size,
-                nhead=self.nhead,
+                d_model=self.embedding_size,
+                nhead=self.n_head,
                 dim_feedforward=self.ff_hidden_size,
                 dropout=dropout,
                 # batch_first=True
@@ -61,8 +65,8 @@ class UGFormerV2(GraphClassifier):
             if conv_type == GAT:
                 self.layers.append(
                     GATConvBlock(
-                        in_channels=self.feature_dim_size,
-                        out_channels=self.feature_dim_size,
+                        in_channels=self.embedding_size,
+                        out_channels=self.embedding_size,
                         concat=False,
                         **conv_kwargs
                     )
@@ -70,29 +74,30 @@ class UGFormerV2(GraphClassifier):
             elif conv_type == GCN:
                 self.layers.append(
                     GCNConvBlock(
-                        in_channels=self.feature_dim_size,
-                        out_channels=self.feature_dim_size,
+                        in_channels=self.embedding_size,
+                        out_channels=self.embedding_size,
                         **conv_kwargs
                     )
                 )
             elif conv_type == SAGE:
                 self.layers.append(
                     SAGEConvBlock(
-                        in_channels=self.feature_dim_size,
-                        out_channels=self.feature_dim_size,
+                        in_channels=self.embedding_size,
+                        out_channels=self.embedding_size,
                         **conv_kwargs
                     )
                 )
             else:
                 raise ValueError(f"conv_type must be one of {SAGE}, {GAT}, {GCN}. Got {conv_type}.")
-        # Linear function
+        # Linear function1e-05
+
         self.predictions = torch.nn.ModuleList()
         self.dropouts = torch.nn.ModuleList()
         for _ in range(self.n_layers):
             self.predictions.append(
                 Linear(
-                    self.feature_dim_size,
-                    self.num_classes
+                    self.embedding_size,
+                    self.dim_target
                 )
             )
             self.dropouts.append(
@@ -102,7 +107,16 @@ class UGFormerV2(GraphClassifier):
             )
 
     @property
+    def embedding_size(self) -> int:
+        return self.config_dict["embedding_size"] if self.config_dict["embedding_size"] is not None \
+            else self.in_channels
+
+    @property
     def hidden_size(self) -> int:
+        return self.config_dict["hidden_size"]
+
+    @property
+    def ff_hidden_size(self) -> int:
         return self.config_dict["hidden_size"]
 
     @property
@@ -123,7 +137,7 @@ class UGFormerV2(GraphClassifier):
 
     def forward(self, x: torch.Tensor, edge_index: torch.Tensor, batch: torch.Tensor, *args, **kwargs):
         prediction_scores = 0
-        input_tr = x
+        input_tr = x if self._projection is None else self._projection(x)
         for layer_idx in range(self.n_layers):
             # Self-Attention over all nodes
             # input_tr = torch.unsqueeze(input_tr, 1)  # [seq_length, batch_size=1, dim] for pytorch transformer
@@ -144,6 +158,8 @@ class UGFormerV2(GraphClassifier):
             # Convolution layer
             input_tr = self.layers[layer_idx](input_tr, edge_index, *args, **kwargs)
             input_tr = F.gelu(input_tr)
+            # not needed dropout
+            # input_tr = F.dropout(input_tr, self.dropout)
 
             # take a sum over all node representations to get graph representations
             graph_embedding = global_add_pool(input_tr, batch=batch)
@@ -152,8 +168,8 @@ class UGFormerV2(GraphClassifier):
             # produce the final scores
             prediction_scores += self.predictions[layer_idx](graph_embedding)
 
-        # return prediction_scores
-        return einops.rearrange(prediction_scores, "b s -> (b s)")
+        # return einops.rearrange(prediction_scores, "b s -> (b s)")
+        return prediction_scores
 
 
 '''def label_smoothing(true_labels: torch.Tensor, classes: int, smoothing=0.1):

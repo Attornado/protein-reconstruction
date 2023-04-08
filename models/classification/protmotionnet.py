@@ -211,7 +211,8 @@ class PairedProtMotionNet(ProtMotionNet):
     def _get_multi_head_attention_embeddings(self,
                                              x: Union[Tensor, tuple[Tensor, Tensor]],
                                              edge_index: Union[Tensor, tuple[Tensor, Tensor]],
-                                             batch_index: Tensor = None, x1: Optional[Tensor] = None,
+                                             batch_index: Tensor = None, 
+                                             x1: Optional[Tensor] = None,
                                              edge_index1: Optional[Tensor] = None,
                                              batch_index1: Optional[Tensor] = None,
                                              *args, **kwargs):
