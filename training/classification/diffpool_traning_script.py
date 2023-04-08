@@ -11,6 +11,7 @@ from log.logger import Logger
 from torch.optim import Adam, Adadelta
 import torchinfo
 
+
 BATCH_SIZE: final = 20
 EPOCHS: final = 3000
 EARLY_STOPPING_PATIENCE: final = 200
@@ -54,14 +55,14 @@ def main():
     print(f"Loaded best_model_acc {best_model_acc}")
     best_conf = None
     best_lr = None
-    conf_count = 0
+    conf_count = 288
 
     grid_values = {
-        "num_layers": [1, 2, 3, 4, 5],
-        'dim_embedding': [64, 128, 256],
+        "num_layers": [5],
+        'dim_embedding': [128, 256],
         'gnn_dim_hidden': [64, 128, 256],
         'dim_embedding_MLP': [50, 100],
-        "learning_rate": [0.001, 0.0001, 0.00001, 0.000001]
+        "learning_rate": [0.0001, 0.00001, 0.000001]
     }
 
     for n in grid_values['num_layers']:
@@ -113,8 +114,8 @@ def main():
                             class_weights = class_weights.to(
                                 torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
                             )
-                        logger.log(f"Launching training for experiment GIN with config: \n {config} with learning rate "
-                                   f"{lr}, \n stored in "
+                        logger.log(f"Launching training for experiment DiffPool with config: \n {config} with learning "
+                                   f"rate {lr}, \n stored in "
                                    f"{full_experiment_path}...")
 
                         model, metrics = train_classifier(

@@ -1,4 +1,6 @@
 from typing import final, Callable, Type, Optional, Union
+
+import einops
 import torch
 from torch import Tensor
 import torch.nn.functional as F
@@ -6,6 +8,8 @@ from torch.nn import MultiheadAttention, TransformerEncoderLayer, TransformerEnc
 from torch_geometric.nn.aggr import LSTMAggregation, SoftmaxAggregation, MaxAggregation, MeanAggregation, SumAggregation
 from torch_geometric.nn.dense import Linear  # , dense_diff_pool this has to be in the "future work"
 from torch_geometric.utils import to_dense_batch
+
+from models.batch_utils import generate_batch_cross_attention_mask, from_dense_batch
 from models.classification.classifiers import GraphClassifier
 from models.layers import SerializableModule
 from functools import partial
@@ -207,7 +211,8 @@ class PairedProtMotionNet(ProtMotionNet):
     def _get_multi_head_attention_embeddings(self,
                                              x: Union[Tensor, tuple[Tensor, Tensor]],
                                              edge_index: Union[Tensor, tuple[Tensor, Tensor]],
-                                             batch_index: Tensor = None, x1: Optional[Tensor] = None,
+                                             batch_index: Tensor = None, 
+                                             x1: Optional[Tensor] = None,
                                              edge_index1: Optional[Tensor] = None,
                                              batch_index1: Optional[Tensor] = None,
                                              *args, **kwargs):
@@ -257,28 +262,48 @@ class PairedProtMotionNet(ProtMotionNet):
         x, mask0 = to_dense_batch(x=x, batch=batch_index, fill_value=0)
         x1, mask1 = to_dense_batch(x=x1, batch=batch_index1, fill_value=0)
 
-        # TODO: Generate key padding mask and attention mask
-        attn_mask = None
-        key_padding_mask = None
+        # Change tensor shape to match the transformer [seq_length, batch_size, dim]
+        x = einops.rearrange(x, "b s f -> s b f")
+        x1 = einops.rearrange(x1, "b s f -> s b f")
+
+        # Generate key padding mask and attention mask
+        attn_mask = generate_batch_cross_attention_mask(batch_padding_mask0=mask0, batch_padding_mask1=mask1)
+
+        # Key padding mask must be created according to the query sequence since the output shape of cross attention
+        # from it, but invert True with False and False with True since True positions are not allowed to attend
+        key_padding_mask = mask1 == False
 
         # Apply cross multi-head attention
         # TODO: check the longer between x and x1, so that the longer is used as query (using x1 should be fine however)
-        x = self._multi_head_attention(query=x1, key=x, value=x, key_padding_mask=key_padding_mask, need_weights=False,
+        x = self._multi_head_attention(query=x1, key=x, value=x, key_padding_mask=None, need_weights=False,
                                        attn_mask=attn_mask)
 
         # TODO: maybe add shortcut-connection with concat/add & the normalization in some way
         del x1  # no need to further memorize this
 
-        return x, attn_mask, key_padding_mask
+        return x, key_padding_mask, mask1
 
     def forward(self, x: Union[Tensor, tuple[Tensor, Tensor]], edge_index: Union[Tensor, tuple[Tensor, Tensor]],
                 batch_index: Tensor = None, x1: Optional[Tensor] = None, edge_index1: Optional[Tensor] = None,
                 batch_index1: Optional[Tensor] = None, *args, **kwargs):
 
         # Get cross multi-head attention embeddings
-        x, _, _ = self._get_multi_head_attention_embeddings(x=x, edge_index=edge_index, batch_index=batch_index, x1=x1,
-                                                            edge_index1=edge_index1, batch_index1=batch_index1, *args,
-                                                            **kwargs)
+        x, _, batch_mask = self._get_multi_head_attention_embeddings(
+            x=x,
+            edge_index=edge_index,
+            batch_index=batch_index,
+            x1=x1,
+            edge_index1=edge_index1,
+            batch_index1=batch_index1,
+            *args,
+            **kwargs
+        )
+
+        # Convert from (sequence_length, batch_size, embedding_size) to (batch_size, sequence_length, embedding_size)
+        x = einops.rearrange(x, "s b f -> b s f")
+
+        # Convert to PyG batch format again
+        x, _ = from_dense_batch(dense_batch=x, mask=batch_mask)
 
         # Apply readout aggregation
         x = self._readout_aggregation(x, index=batch_index)
@@ -343,8 +368,8 @@ class TransformerPairedProtMotionNet(PairedProtMotionNet):
                 batch_index: Tensor = None, x1: Optional[Tensor] = None, edge_index1: Optional[Tensor] = None,
                 batch_index1: Optional[Tensor] = None, *args, **kwargs):
 
-        # Get cross multi-head attention embeddings
-        x, attn_mask, key_padding_mask = self._get_multi_head_attention_embeddings(
+        # Get cross multi-head attention embeddings and masks
+        x, key_padding_mask, batch_mask = self._get_multi_head_attention_embeddings(
             x=x,
             edge_index=edge_index,
             batch_index=batch_index,
@@ -356,7 +381,13 @@ class TransformerPairedProtMotionNet(PairedProtMotionNet):
         )
 
         # Apply transformer encoder to further process the embeddings
-        x = self._transformer_encoder(src=x, mask=attn_mask, src_key_padding_mask=key_padding_mask)
+        x = self._transformer_encoder(src=x, src_key_padding_mask=key_padding_mask)
+
+        # Convert from (sequence_length, batch_size, embedding_size) to (batch_size, sequence_length, embedding_size)
+        x = einops.rearrange(x, "s b f -> b s f")
+
+        # Convert to PyG batch format again
+        x, _ = from_dense_batch(dense_batch=x, mask=batch_mask)
 
         # Apply readout aggregation
         x = self._readout_aggregation(x, index=batch_index)
