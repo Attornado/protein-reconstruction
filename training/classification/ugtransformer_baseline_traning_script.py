@@ -12,7 +12,7 @@ from torch.optim import Adam, Adadelta
 import torchinfo
 
 
-BATCH_SIZE: final = 25
+BATCH_SIZE: final = 10
 EPOCHS: final = 2000
 EARLY_STOPPING_PATIENCE: final = 300
 EXPERIMENT_NAME: final = 'ugtransformer_test0'
@@ -21,6 +21,7 @@ RESTORE_CHECKPOINT: final = True
 USE_CLASS_WEIGHTS: final = True
 LABEL_SMOOTHING: final = 0.0
 IN_CHANNELS: final = 10
+CONF_COUNT_START: final = 7
 
 
 def main():
@@ -48,7 +49,7 @@ def main():
     print(f"Loaded best_model_acc {best_model_acc}")
     best_conf = None
     best_lr = None
-    conf_count = 0
+    conf_count = 25
 
     grid_values = {
         'dropout': [0.1, 0.5],
@@ -57,7 +58,7 @@ def main():
         'n_head': [1, 4, 8],
         'n_heads_gat': [4, 8],
         'embedding_dim': ["feature", "hidden"],
-        "n_self_att_layers": [1, 2, 3],
+        "n_self_att_layers": [1, 3, 5],
         "n_layers": [1, 2, 3],
         "learning_rate": [0.0001, 0.000001, 0.0000001]
     }
@@ -71,27 +72,135 @@ def main():
                             for nal in grid_values['n_self_att_layers']:
                                 for lr in grid_values['learning_rate']:
 
-                                    config = {
-                                        'dropout': d,
-                                        "model_name": m,
-                                        'hidden_size': h,  # try 10, 32, 64, 50, 100, 200
-                                        'out_dim': h,  # try 10, 20, 50, 100, 200,
-                                        'n_head': n,
-                                        "n_self_att_layers": nal,
-                                        "n_layers": nl,
-                                        "embedding_dim": h if emb == 'hidden' else in_channels,
-                                    }
-                                    learning_rate = lr
-                                    if config['model_name'] == GAT:
-                                        for gn in grid_values['n_heads_gat']:
-                                            config['heads'] = gn
+                                    if conf_count < CONF_COUNT_START:
+                                        conf_count += 1
+
+                                    else:
+
+                                        config = {
+                                            'dropout': d,
+                                            "model_name": m,
+                                            'hidden_size': h,  # try 10, 32, 64, 50, 100, 200
+                                            'out_dim': h,  # try 10, 20, 50, 100, 200,
+                                            'n_head': n,
+                                            "n_self_att_layers": nal,
+                                            "n_layers": nl,
+                                            "embedding_dim": h if emb == 'hidden' else in_channels,
+                                        }
+                                        learning_rate = lr
+                                        if config['model_name'] == GAT:
+                                            for gn in grid_values['n_heads_gat']:
+                                                if conf_count < CONF_COUNT_START:
+                                                    conf_count += 1
+
+                                                else:
+                                                    config['heads'] = gn
+                                                    ugformerv2 = UGFormerV2(dim_features=in_channels,
+                                                                            hidden_size=h,
+                                                                            n_self_att_layers=nal,
+                                                                            n_layers=nl,
+                                                                            n_head=n,
+                                                                            dropout=d,
+                                                                            embedding_size=config['embedding_dim'],
+                                                                            dim_target=n_classes,
+                                                                            conv_type=m
+                                                                            )
+
+                                                    if l2 > 0:
+                                                        optimizer = Adam(ugformerv2.parameters(), lr=learning_rate,
+                                                                         weight_decay=l2)
+                                                    elif optim == "adam":
+                                                        optimizer = Adam(ugformerv2.parameters(), lr=learning_rate)
+                                                    else:
+                                                        optimizer = Adadelta(ugformerv2.parameters())
+
+                                                    conf_count += 1
+                                                    full_experiment_path = os.path.join(EXPERIMENT_PATH, EXPERIMENT_NAME,
+                                                                                        f"n_{conf_count}")
+                                                    checkpoint_path = os.path.join(full_experiment_path, "checkpoint.pt")
+                                                    full_state_dict_path = os.path.join(full_experiment_path,
+                                                                                        "state_dict.pt")
+                                                    if RESTORE_CHECKPOINT and os.path.exists(checkpoint_path):
+                                                        print("Checkpoint found, loading state dict from checkpoint...")
+                                                        state_dict = torch.load(checkpoint_path)
+                                                        ugformerv2.load_state_dict(state_dict)
+                                                        print("State dict loaded.")
+                                                    elif RESTORE_CHECKPOINT and os.path.exists(full_state_dict_path):
+                                                        print("Final state dict found, loading state dict...")
+                                                        state_dict = torch.load(full_state_dict_path)
+                                                        ugformerv2.load_state_dict(state_dict)
+                                                        print("State dict loaded.")
+
+                                                    print(ugformerv2)
+                                                    print(torchinfo.summary(ugformerv2, depth=5))
+
+                                                    full_experiment_path = os.path.join(EXPERIMENT_PATH, EXPERIMENT_NAME,
+                                                                                        f"n_{conf_count}")
+                                                    logger = Logger(filepath=os.path.join(full_experiment_path,
+                                                                                          "trainlog.txt"),
+                                                                    mode="a")
+                                                    if not USE_CLASS_WEIGHTS:
+                                                        class_weights = None
+                                                        # set class weights to None if not use class weights is selected
+                                                    else:
+                                                        class_weights = class_weights.to(
+                                                            torch.device("cuda") if torch.cuda.is_available() else
+                                                            torch.device("cpu")
+                                                        )
+                                                    logger.log(f"Launching training for experiment UGFormerV2 "
+                                                               f"n{conf_count} with config: \n {config} with learning rate "
+                                                               f"{lr}, \n stored in "
+                                                               f"{full_experiment_path}...")
+
+                                                    model, metrics = train_classifier(
+                                                        ugformerv2,
+                                                        train_data=dl_train,
+                                                        val_data=dl_val,
+                                                        epochs=EPOCHS,
+                                                        optimizer=optimizer,
+                                                        experiment_path=EXPERIMENT_PATH,
+                                                        experiment_name=os.path.join(EXPERIMENT_NAME, f"n_{conf_count}"),
+                                                        early_stopping_patience=EARLY_STOPPING_PATIENCE,
+                                                        criterion=MulticlassClassificationLoss(
+                                                            weights=class_weights,
+                                                            label_smoothing=LABEL_SMOOTHING
+                                                        ),
+                                                        logger=logger
+                                                    )
+
+                                                    if best_model_acc < metrics['accuracy']:
+                                                        full_experiment_path = os.path.join(EXPERIMENT_PATH,
+                                                                                            EXPERIMENT_NAME)
+                                                        logger = Logger(filepath=os.path.join(full_experiment_path,
+                                                                                              "trainlog.txt"),
+                                                                        mode="a")
+                                                        logger.log(f"Found better model than {best_model_acc} acc, with "
+                                                                   f"accuracy {metrics['accuracy']} acc, saving it in best"
+                                                                   f" dir")
+                                                        best_model_acc = metrics['accuracy']
+                                                        best_conf = config
+                                                        best_lr = lr
+                                                        constructor_params = model.serialize_constructor_params()
+                                                        state_dict = model.state_dict()
+                                                        torch.save(state_dict, os.path.join(full_experiment_path,
+                                                                                            "state_dict.pt"))
+                                                        torch.save(constructor_params, os.path.join(full_experiment_path,
+                                                                                                    "constructor_params.pt"))
+                                                        torch.save({"best_acc": best_model_acc},
+                                                                   os.path.join(full_experiment_path, "best_acc.pt"))
+                                                        logger.log(f"Model with lr {lr} and config {config} "
+                                                                   f"\n trained and stored to {full_experiment_path}.")
+                                                    del model
+                                        else:
+                                            learning_rate = lr
                                             ugformerv2 = UGFormerV2(dim_features=in_channels,
                                                                     hidden_size=h,
                                                                     n_self_att_layers=nal,
                                                                     n_layers=nl,
                                                                     n_head=n,
                                                                     dropout=d,
-                                                                    embedding_size=config['embedding_dim'],
+                                                                    embedding_size=h if emb == 'hidden'
+                                                                    else in_channels,
                                                                     dim_target=n_classes,
                                                                     conv_type=m
                                                                     )
@@ -136,7 +245,7 @@ def main():
                                                     torch.device("cpu")
                                                 )
                                             logger.log(f"Launching training for experiment UGFormerV2 n{conf_count} "
-                                                       f"with config: \n {config} with learning rate "
+                                                       f"with config \n {config} with learning rate "
                                                        f"{lr}, \n stored in "
                                                        f"{full_experiment_path}...")
 
@@ -159,8 +268,9 @@ def main():
                                                 logger = Logger(filepath=os.path.join(full_experiment_path,
                                                                                       "trainlog.txt"),
                                                                 mode="a")
-                                                logger.log(f"Found better model than {best_model_acc} acc, with "
-                                                           f"accuracy {metrics['accuracy']} acc, saving it in best dir")
+                                                logger.log(f"Found better model than {best_model_acc} acc, "
+                                                           f"with accuracy "
+                                                           f"{metrics['accuracy']} acc, saving it in best dir")
                                                 best_model_acc = metrics['accuracy']
                                                 best_conf = config
                                                 best_lr = lr
@@ -172,97 +282,9 @@ def main():
                                                                                             "constructor_params.pt"))
                                                 torch.save({"best_acc": best_model_acc},
                                                            os.path.join(full_experiment_path, "best_acc.pt"))
-                                                logger.log(f"Model with lr {lr} and config {config} "
-                                                           f"\n trained and stored to {full_experiment_path}.")
+                                                logger.log(f"Model with lr {lr} and config {config} \n trained and "
+                                                           f"stored to {full_experiment_path}.")
                                             del model
-                                    else:
-                                        learning_rate = lr
-                                        ugformerv2 = UGFormerV2(dim_features=in_channels,
-                                                                hidden_size=h,
-                                                                n_self_att_layers=nal,
-                                                                n_layers=nl,
-                                                                n_head=n,
-                                                                dropout=d,
-                                                                embedding_size=h if emb == 'hidden' else in_channels,
-                                                                dim_target=n_classes,
-                                                                conv_type=m
-                                                                )
-
-                                        if l2 > 0:
-                                            optimizer = Adam(ugformerv2.parameters(), lr=learning_rate, weight_decay=l2)
-                                        elif optim == "adam":
-                                            optimizer = Adam(ugformerv2.parameters(), lr=learning_rate)
-                                        else:
-                                            optimizer = Adadelta(ugformerv2.parameters())
-
-                                        conf_count += 1
-                                        full_experiment_path = os.path.join(EXPERIMENT_PATH, EXPERIMENT_NAME,
-                                                                            f"n_{conf_count}")
-                                        checkpoint_path = os.path.join(full_experiment_path, "checkpoint.pt")
-                                        full_state_dict_path = os.path.join(full_experiment_path, "state_dict.pt")
-                                        if RESTORE_CHECKPOINT and os.path.exists(checkpoint_path):
-                                            print("Checkpoint found, loading state dict from checkpoint...")
-                                            state_dict = torch.load(checkpoint_path)
-                                            ugformerv2.load_state_dict(state_dict)
-                                            print("State dict loaded.")
-                                        elif RESTORE_CHECKPOINT and os.path.exists(full_state_dict_path):
-                                            print("Final state dict found, loading state dict...")
-                                            state_dict = torch.load(full_state_dict_path)
-                                            ugformerv2.load_state_dict(state_dict)
-                                            print("State dict loaded.")
-
-                                        print(ugformerv2)
-                                        print(torchinfo.summary(ugformerv2, depth=5))
-
-                                        full_experiment_path = os.path.join(EXPERIMENT_PATH, EXPERIMENT_NAME,
-                                                                            f"n_{conf_count}")
-                                        logger = Logger(filepath=os.path.join(full_experiment_path, "trainlog.txt"),
-                                                        mode="a")
-                                        if not USE_CLASS_WEIGHTS:
-                                            class_weights = None
-                                            # set class weights to None if not use class weights is selected
-                                        else:
-                                            class_weights = class_weights.to(
-                                                torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-                                            )
-                                        logger.log(f"Launching training for experiment UGFormerV2 n{conf_count} with "
-                                                   f"config \n {config} with learning rate "
-                                                   f"{lr}, \n stored in "
-                                                   f"{full_experiment_path}...")
-
-                                        model, metrics = train_classifier(
-                                            ugformerv2,
-                                            train_data=dl_train,
-                                            val_data=dl_val,
-                                            epochs=EPOCHS,
-                                            optimizer=optimizer,
-                                            experiment_path=EXPERIMENT_PATH,
-                                            experiment_name=os.path.join(EXPERIMENT_NAME, f"n_{conf_count}"),
-                                            early_stopping_patience=EARLY_STOPPING_PATIENCE,
-                                            criterion=MulticlassClassificationLoss(weights=class_weights,
-                                                                                   label_smoothing=LABEL_SMOOTHING),
-                                            logger=logger
-                                        )
-
-                                        if best_model_acc < metrics['accuracy']:
-                                            full_experiment_path = os.path.join(EXPERIMENT_PATH, EXPERIMENT_NAME)
-                                            logger = Logger(filepath=os.path.join(full_experiment_path, "trainlog.txt"),
-                                                            mode="a")
-                                            logger.log(f"Found better model than {best_model_acc} acc, with accuracy "
-                                                       f"{metrics['accuracy']} acc, saving it in best dir")
-                                            best_model_acc = metrics['accuracy']
-                                            best_conf = config
-                                            best_lr = lr
-                                            constructor_params = model.serialize_constructor_params()
-                                            state_dict = model.state_dict()
-                                            torch.save(state_dict, os.path.join(full_experiment_path, "state_dict.pt"))
-                                            torch.save(constructor_params, os.path.join(full_experiment_path,
-                                                                                        "constructor_params.pt"))
-                                            torch.save({"best_acc": best_model_acc},
-                                                       os.path.join(full_experiment_path, "best_acc.pt"))
-                                            logger.log(f"Model with lr {lr} and config {config} \n trained and stored to "
-                                                       f" {full_experiment_path}.")
-                                        del model
 
     '''
     pscdb_baseline = GNNBaselinePSCDB(dim_features=in_channels, dim_target=n_classes, config=config)
