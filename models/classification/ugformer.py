@@ -3,7 +3,7 @@ import einops
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import global_add_pool
+from torch_geometric.nn.pool import global_add_pool
 from torch_geometric.utils import to_dense_batch
 from models.batch_utils import from_dense_batch
 from models.classification.classifiers import GraphClassifier
