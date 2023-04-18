@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.autograd import Variable
 import math
 from models.pretraining.log_uniform import LogUniformSampler
@@ -16,6 +15,7 @@ class SampledSoftmax(nn.Module):
         self.nsampled = nsampled
         self.device = device
         #
+        # noinspection PyArgumentList
         self.sampler = LogUniformSampler(self.ntokens)
         #
         self.weight = nn.Parameter(torch.Tensor(ntokens, nhid))

@@ -12,16 +12,16 @@ from torch.optim import Adam, Adadelta
 import torchinfo
 
 
-BATCH_SIZE: final = 10
+BATCH_SIZE: final = 5
 EPOCHS: final = 2000
-EARLY_STOPPING_PATIENCE: final = 300
+EARLY_STOPPING_PATIENCE: final = 150
 EXPERIMENT_NAME: final = 'ugtransformer_test0'
 EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "classification", "ugtransformer")
 RESTORE_CHECKPOINT: final = True
 USE_CLASS_WEIGHTS: final = True
 LABEL_SMOOTHING: final = 0.0
 IN_CHANNELS: final = 10
-CONF_COUNT_START: final = 7
+CONF_COUNT_START: final = 54
 
 
 def main():
@@ -49,16 +49,16 @@ def main():
     print(f"Loaded best_model_acc {best_model_acc}")
     best_conf = None
     best_lr = None
-    conf_count = 25
+    conf_count = 0
 
     grid_values = {
         'dropout': [0.1, 0.5],
         "model_name": [SAGE, GAT, GCN],  # had GCN_MODEL_TYPE, GAT_MODEL_TYPE
-        'hidden_size': [32, 64, 128, 256, 512],
-        'n_head': [1, 4, 8],
-        'n_heads_gat': [4, 8],
+        'hidden_size': [32, 64, 128, 256],
+        'n_head': [1, 2, 4],
+        'n_heads_gat': [4],
         'embedding_dim': ["feature", "hidden"],
-        "n_self_att_layers": [1, 3, 5],
+        "n_self_att_layers": [1, 3, 4],
         "n_layers": [1, 2, 3],
         "learning_rate": [0.0001, 0.000001, 0.0000001]
     }
@@ -68,12 +68,23 @@ def main():
             for h in grid_values['hidden_size']:
                 for n in grid_values['n_head']:
                     for nl in grid_values['n_layers']:
-                        for emb in grid_values['embedding_dim']:
+                        for emb in grid_values['embedding_dim'] if n != 4 else ["hidden"]:
                             for nal in grid_values['n_self_att_layers']:
                                 for lr in grid_values['learning_rate']:
 
                                     if conf_count < CONF_COUNT_START:
                                         conf_count += 1
+                                        config = {
+                                            'dropout': d,
+                                            "model_name": m,
+                                            'hidden_size': h,  # try 10, 32, 64, 50, 100, 200
+                                            'out_dim': h,  # try 10, 20, 50, 100, 200,
+                                            'n_head': n,
+                                            "n_self_att_layers": nal,
+                                            "n_layers": nl,
+                                            "embedding_dim": h if emb == 'hidden' else in_channels,
+                                        }
+                                        print(config)
 
                                     else:
 
