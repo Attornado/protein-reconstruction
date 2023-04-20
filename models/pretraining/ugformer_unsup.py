@@ -1,19 +1,19 @@
 from typing import Optional, final, Union
 import os
+from tqdm import tqdm
 import numpy as np
-import torch.nn.functional as F
-from gevent import os
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
+import torch
+import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn.dense import Linear
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
-import torch
 from log.logger import Logger
 from models.layers import SerializableModule
-from sampled_softmax import SampledSoftmax
+from models.pretraining.sampled_softmax import SampledSoftmax
 from training.training_tools import EARLY_STOP_PATIENCE, EarlyStopping, MetricsHistoryTracer, FIGURE_SIZE_DEFAULT
 
 
@@ -179,6 +179,33 @@ def get_global_node_indexes(batch_data: Data,
 
         # Get the tensor of the global indexes of the nodes of the i-th graph in the batch, and put them in the tensor
         global_node_indexes[start_index:end_index] = torch.arange(start=global_start_index, end=global_end_index)
+
+    return global_node_indexes
+
+
+def compute_global_graph_indexes(train_data: DataLoader,
+                                 path: Optional[str] = None,
+                                 use_tqdm: bool = False
+                                 ) -> dict[Union[str, int], tuple[int, int]]:
+    global_node_indexes = {}
+    iterable = tqdm(enumerate(train_data), desc="Computing graph global indexes") if use_tqdm else enumerate(train_data)
+    node_count = 0
+
+    for i, data in iterable:
+        # Get the graph name, assuming batch size 1
+        name = data.name[0] if type(data.name[0]) != list else data.name[0][0]
+
+        # Get the global node index range for the current graph, and increment the global node count
+        start_index = node_count
+        end_index = node_count + data.x.shape[0]
+        node_count += data.x.shape[0]
+
+        # Store index range in dictionary
+        global_node_indexes[name] = (start_index, end_index)
+
+    # Store the dictionary to given path if required
+    if path is not None:
+        torch.save(global_node_indexes, path)
 
     return global_node_indexes
 
@@ -407,12 +434,12 @@ def train_ugformer_unsup_inductive(model: UGformerV1,
         if logger is None:
             print(
                 'Epoch: {:d}, Train loss: {:.4f}, Accuracy: {:.4f}, AUC: {:.4f}'
-                .format(epoch + 1, train_loss, acc, acc, auc)
+                .format(epoch + 1, train_loss, acc, auc)
             )
         else:
             logger.log(
                 'Epoch: {:d}, Train loss: {:.4f}, Accuracy: {:.4f}, AUC: {:.4f}'
-                .format(epoch + 1, train_loss, acc, acc, auc)
+                .format(epoch + 1, train_loss, acc, auc)
             )
 
         # Tensorboard state update

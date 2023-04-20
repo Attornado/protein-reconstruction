@@ -56,16 +56,20 @@ ENZYMES_CLASS = "enzyme"
 # Cleaned dataset-related constants
 CLEANED_DATA: final = os.path.join(DATA_PATH, "cleaned")
 
+# Pretrain dataset
 PRETRAIN_CLEANED: final = os.path.join(CLEANED_DATA, "pretraining")
 PRETRAIN_CLEANED_TRAIN: final = os.path.join(PRETRAIN_CLEANED, "train")
 PRETRAIN_CLEANED_VAL: final = os.path.join(PRETRAIN_CLEANED, "validation")
 PRETRAIN_CLEANED_TEST: final = os.path.join(PRETRAIN_CLEANED, "test")
+PRETRAIN_GRAPH_INDEXES: final = os.path.join(PRETRAIN_CLEANED_TRAIN, "graph_indexes.pt")
 
+# PSCDB
 PSCDB_CLEANED: final = os.path.join(CLEANED_DATA, "pscdb")
 PSCDB_CLEANED_TRAIN: final = os.path.join(PSCDB_CLEANED, "train")
 PSCDB_CLEANED_VAL: final = os.path.join(PSCDB_CLEANED, "validation")
 PSCDB_CLEANED_TEST: final = os.path.join(PSCDB_CLEANED, "test")
 PSCDB_CLASS_WEIGHTS: final = os.path.join(PSCDB_CLEANED, "class_weights.pt")
+PSCDB_GRAPH_INDEXES: final = os.path.join(PSCDB_CLEANED_TRAIN, "graph_indexes.pt")
 
 # Paired-PSCDB
 PSCDB_PAIRED_CLEANED: final = os.path.join(CLEANED_DATA, "pscdb_paired")
@@ -79,19 +83,21 @@ PARAMS_DIR_SUFFIX: final = "params"
 PARAMS_CSV_SUFFIX: final = "param_df.csv"
 PARAMS_JSON_SUFFIX: final = "params.json"
 
-
+# Fold-classification
 FOLD_CLASSIFICATION_CLEANED: final = os.path.join(CLEANED_DATA, "fold_classification")
 FOLD_CLASSIFICATION_CLEANED_TRAIN: final = os.path.join(FOLD_CLASSIFICATION_CLEANED, "train")
 FOLD_CLASSIFICATION_CLEANED_VAL: final = os.path.join(FOLD_CLASSIFICATION_CLEANED, "validation")
 FOLD_CLASSIFICATION_CLEANED_TEST: final = os.path.join(FOLD_CLASSIFICATION_CLEANED, "test")
 FOLD_CLASSIFICATION_CLASS_WEIGHTS: final = os.path.join(FOLD_CLASSIFICATION_CLEANED, "class_weights.pt")
+FOLD_CLASSIFICATION_GRAPH_INDEXES: final = os.path.join(FOLD_CLASSIFICATION_CLEANED_TRAIN, "graph_indexes.pt")
 
-
+# Enzymes
 ENZYMES_CLEANED: final = os.path.join(CLEANED_DATA, "enzymes")
 ENZYMES_CLEANED_TRAIN: final = os.path.join(ENZYMES_CLEANED, "train")
 ENZYMES_CLEANED_VAL: final = os.path.join(ENZYMES_CLEANED, "validation")
 ENZYMES_CLEANED_TEST: final = os.path.join(ENZYMES_CLEANED, "test")
 ENZYMES_CLASS_WEIGHTS: final = os.path.join(ENZYMES_CLEANED, "class_weights.pt")
+ENZYMES_GRAPH_INDEXES: final = os.path.join(ENZYMES_CLEANED_TRAIN, "graph_indexes.pt")
 
 
 # Randomness-related constants
