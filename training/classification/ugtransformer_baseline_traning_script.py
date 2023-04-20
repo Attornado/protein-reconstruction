@@ -12,16 +12,16 @@ from torch.optim import Adam, Adadelta
 import torchinfo
 
 
-BATCH_SIZE: final = 5
+BATCH_SIZE: final = 4
 EPOCHS: final = 2000
-EARLY_STOPPING_PATIENCE: final = 150
+EARLY_STOPPING_PATIENCE: final = 100
 EXPERIMENT_NAME: final = 'ugtransformer_test0'
 EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "classification", "ugtransformer")
 RESTORE_CHECKPOINT: final = True
 USE_CLASS_WEIGHTS: final = True
 LABEL_SMOOTHING: final = 0.0
 IN_CHANNELS: final = 10
-CONF_COUNT_START: final = 54
+CONF_COUNT_START: final = 97
 
 
 def main():
@@ -53,12 +53,12 @@ def main():
 
     grid_values = {
         'dropout': [0.1, 0.5],
-        "model_name": [SAGE, GAT, GCN],  # had GCN_MODEL_TYPE, GAT_MODEL_TYPE
+        "model_name": [SAGE, GCN, GAT],  # had GCN_MODEL_TYPE, GAT_MODEL_TYPE
         'hidden_size': [32, 64, 128, 256],
         'n_head': [1, 2, 4],
         'n_heads_gat': [4],
         'embedding_dim': ["feature", "hidden"],
-        "n_self_att_layers": [1, 3, 4],
+        "n_self_att_layers": [1, 2, 3],
         "n_layers": [1, 2, 3],
         "learning_rate": [0.0001, 0.000001, 0.0000001]
     }
@@ -68,11 +68,11 @@ def main():
             for h in grid_values['hidden_size']:
                 for n in grid_values['n_head']:
                     for nl in grid_values['n_layers']:
-                        for emb in grid_values['embedding_dim'] if n != 4 else ["hidden"]:
+                        for emb in grid_values['embedding_dim'] if nl != 3 else ["feature"]:
                             for nal in grid_values['n_self_att_layers']:
                                 for lr in grid_values['learning_rate']:
 
-                                    if conf_count < CONF_COUNT_START:
+                                    if conf_count < CONF_COUNT_START or n == 4:
                                         conf_count += 1
                                         config = {
                                             'dropout': d,
@@ -114,8 +114,7 @@ def main():
                                                                             dropout=d,
                                                                             embedding_size=config['embedding_dim'],
                                                                             dim_target=n_classes,
-                                                                            conv_type=m
-                                                                            )
+                                                                            conv_type=m)
 
                                                     if l2 > 0:
                                                         optimizer = Adam(ugformerv2.parameters(), lr=learning_rate,
