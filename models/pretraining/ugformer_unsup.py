@@ -368,7 +368,6 @@ def train_ugformer_unsup_inductive(model: UGformerV1,
                                    global_graph_indexes: Optional[dict[Union[str, int], tuple[int, int]]] = None,
                                    early_stopping_patience: int = EARLY_STOP_PATIENCE,
                                    early_stopping_delta: float = 0,
-                                   top_k: int = 3,
                                    logger: Optional[Logger] = None,
                                    use_tensorboard_log: bool = False
                                    ) -> (torch.nn.Module, dict):
@@ -399,13 +398,9 @@ def train_ugformer_unsup_inductive(model: UGformerV1,
     # Metric history trace object
     mht = MetricsHistoryTracer(
         metrics=[
-            "avg_precision",
-            "avg_recall",
-            "avg_accuracy",
-            f"avg_top{top_k}_accuracy",
-            "avg_f1",
-            "val_loss",
-            "train_loss"
+            'train_loss',
+            'AUC',
+            'accuracy'
         ],
         name="Classifier training metrics"
     )
