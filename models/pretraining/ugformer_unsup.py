@@ -19,6 +19,7 @@ from training.training_tools import EARLY_STOP_PATIENCE, EarlyStopping, MetricsH
 
 DROPOUT_TRANSFORMER_BLOCK: final = 0.5
 SOLVER_LOGISTIC_REGRESSION: final = "liblinear"
+VOCAB_SIZE_KEY: final = "vocab_size"
 
 
 class UGformerV1(SerializableModule):
@@ -33,7 +34,7 @@ class UGformerV1(SerializableModule):
                  embed_dim: Optional[int] = None,
                  n_heads: int = 1,
                  dropout: float = 0.5,
-                 device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+                 device: str = "cuda" if torch.cuda.is_available() else "cpu"
                  ):
         super(UGformerV1, self).__init__()
 
@@ -44,7 +45,7 @@ class UGformerV1(SerializableModule):
         self.__num_gnn_layers: int = num_gnn_layers
         self.__vocab_size: int = vocab_size
         self.__sampled_num: int = sampled_num
-        self.__device: torch.device = device
+        self.__device: torch.device = torch.device(device)
         self.__embed_dim: Optional[int] = embed_dim
         self.__n_heads: int = n_heads
         self.__dropout: float = dropout
@@ -186,10 +187,11 @@ def get_global_node_indexes(batch_data: Data,
 def compute_global_graph_indexes(train_data: DataLoader,
                                  path: Optional[str] = None,
                                  use_tqdm: bool = False
-                                 ) -> dict[Union[str, int], tuple[int, int]]:
+                                 ) -> dict[Union[str, int], Union[int, tuple[int, int]]]:
     global_node_indexes = {}
     iterable = tqdm(enumerate(train_data), desc="Computing graph global indexes") if use_tqdm else enumerate(train_data)
     node_count = 0
+    last_graph_name = None
 
     for i, data in iterable:
         # Get the graph name, assuming batch size 1
@@ -202,6 +204,13 @@ def compute_global_graph_indexes(train_data: DataLoader,
 
         # Store index range in dictionary
         global_node_indexes[name] = (start_index, end_index)
+
+        # Trace last graph name to get the final vocab size (total node number)
+        last_graph_name = name
+
+    # Get the final vocab size (total node number) and store it in dictionary
+    vocab_size = global_node_indexes[last_graph_name][1]
+    global_node_indexes[VOCAB_SIZE_KEY] = vocab_size
 
     # Store the dictionary to given path if required
     if path is not None:
@@ -280,6 +289,9 @@ def train_step_ugformer_unsup(model: UGformerV1,
                         sampled_neighbour_indices=selected_neighbours_indices,
                         input_y=node_indices_y)
 
+        del _
+        torch.cuda.empty_cache()
+
         # Gradient update
         loss.backward()
 
@@ -294,6 +306,11 @@ def train_step_ugformer_unsup(model: UGformerV1,
         else:
             logger.log(f"Steps: {steps}/{len(train_data)}, running loss {running_loss}")
 
+        del loss
+        del _
+        del data
+        torch.cuda.empty_cache()
+        torch.cuda.empty_cache()
         steps += 1
 
     return float(running_loss)
@@ -322,7 +339,10 @@ def test_step_ugformer_unsup(model: UGformerV1, train_data: DataLoader, val_data
 
         x_values_train.append(output_vectors.detach().cpu())
         y_values_train.append(data.y.detach().cpu())
+        del data
+        del selected_neighbours_indices
         del _, output_vectors
+        torch.cuda.empty_cache()
         steps += 1
 
     x_values_val = []
@@ -340,7 +360,10 @@ def test_step_ugformer_unsup(model: UGformerV1, train_data: DataLoader, val_data
 
         x_values_val.append(output_vectors.detach().cpu())
         y_values_val.append(data.y.detach().cpu())
+        del data
+        del selected_neighbours_indices
         del _, output_vectors
+        torch.cuda.empty_cache()
         steps += 1
 
     x_values_val = torch.cat(x_values_val, dim=0).detach().cpu().numpy()
@@ -373,6 +396,7 @@ def train_ugformer_unsup_inductive(model: UGformerV1,
                                    ) -> (torch.nn.Module, dict):
     # TODO: test this
     # Move model to device
+    torch.cuda.empty_cache()
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
 
@@ -483,26 +507,22 @@ def train_ugformer_unsup_inductive(model: UGformerV1,
         ],
         figsize=FIGURE_SIZE_DEFAULT,
         traced_max_metric='accuracy',
-        store_path=os.path.join(f"{experiment_path}", "avg_accuracy.svg")
+        store_path=os.path.join(f"{experiment_path}", "accuracy.svg")
     )
 
     # Load best model
     model.load_state_dict(torch.load(checkpoint_path))
 
-    avg_precision, avg_recall, avg_accuracy, avg_topk_accuracy, avg_f1, val_loss = test_step_ugformer_unsup(
+    acc, auc = test_step_ugformer_unsup(
         model=model,
-        train_data=train_data,
+        train_data=train_data if val_train_data is None else val_train_data,
         val_data=val_data,
         n_neighbours=n_neighbours,
         device=device
     )
 
     metrics = {
-        "precision": avg_precision,
-        "recall": avg_recall,
-        "accuracy": avg_accuracy,
-        "avg_topk_accuracy": avg_topk_accuracy,
-        "f1": avg_f1,
-        "val_loss": val_loss
+        "accuracy": acc,
+        "auc": auc
     }
     return model, metrics

@@ -12,16 +12,16 @@ from torch.optim import Adam, Adadelta
 import torchinfo
 
 
-BATCH_SIZE: final = 4
+BATCH_SIZE: final = 30
 EPOCHS: final = 2000
-EARLY_STOPPING_PATIENCE: final = 100
+EARLY_STOPPING_PATIENCE: final = 25
 EXPERIMENT_NAME: final = 'ugtransformer_test0'
 EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "classification", "ugtransformer")
 RESTORE_CHECKPOINT: final = True
 USE_CLASS_WEIGHTS: final = True
 LABEL_SMOOTHING: final = 0.0
 IN_CHANNELS: final = 10
-CONF_COUNT_START: final = 97
+CONF_COUNT_START: final = 2297
 
 
 def main():
@@ -68,11 +68,12 @@ def main():
             for h in grid_values['hidden_size']:
                 for n in grid_values['n_head']:
                     for nl in grid_values['n_layers']:
-                        for emb in grid_values['embedding_dim'] if nl != 3 else ["feature"]:
+                        for emb in grid_values['embedding_dim']:
                             for nal in grid_values['n_self_att_layers']:
                                 for lr in grid_values['learning_rate']:
 
-                                    if conf_count < CONF_COUNT_START or n == 4:
+                                    if conf_count < CONF_COUNT_START or n == 4 or lr == 0.0001 or d == 0.1 or h == 64 \
+                                            or nal == 3 or nl == 3 or m == SAGE or m == GCN:
                                         conf_count += 1
                                         config = {
                                             'dropout': d,
