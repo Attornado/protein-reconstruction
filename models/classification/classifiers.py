@@ -188,18 +188,19 @@ def train_step_classifier(model: GraphClassifier, train_data: DataLoader, optimi
     steps: int = 1
 
     for data in iter(train_data):
-        # move batch to device
-        data = data.to(device)
-        # reset the optimizer gradients
+        # Reset the optimizer gradients
         optimizer.zero_grad()
 
         # Encoder output
-        y_hat = model(data.x.float(), data.edge_index, data.batch)
+        y_hat = model(data.x.float().to(device), data.edge_index.to(device), data.batch.to(device))
 
-        loss = model.loss(y=data.y, y_hat=y_hat, criterion=criterion, additional_terms=None)
+        loss = model.loss(y=data.y.to(device), y_hat=y_hat, criterion=criterion, additional_terms=None)
+
+        torch.cuda.empty_cache()
 
         # Gradient update
         loss.backward()
+
         # Advance the optimizer state
         optimizer.step()
 
@@ -211,6 +212,11 @@ def train_step_classifier(model: GraphClassifier, train_data: DataLoader, optimi
         else:
             logger.log(f"Steps: {steps}/{len(train_data)}, running loss {running_loss}")
         steps += 1
+
+        del loss
+        del y_hat
+        del data
+        torch.cuda.empty_cache()
 
     return float(running_loss)
 
@@ -234,25 +240,41 @@ def test_step_classifier(model: GraphClassifier, val_data: DataLoader, device: t
 
     for data in iter(val_data):
         # move batch to device
-        data = data.to(device)
+        # data = data.to(device)
 
         if use_edge_weight and use_edge_attr:
-            loss, acc, top_k_acc, prec, rec, f1 = model.test(x=data.x.float(), edge_index=data.edge_index, y=data.y,
-                                                             batch_index=data.batch, criterion=criterion, top_k=top_k,
-                                                             edge_weight=data.edge_weight, edge_attr=data.edge_attr)
+            loss, acc, top_k_acc, prec, rec, f1 = model.test(x=data.x.float().to(device),
+                                                             edge_index=data.edge_index.to(device),
+                                                             y=data.y.to(device),
+                                                             batch_index=data.batch.to(device),
+                                                             criterion=criterion,
+                                                             top_k=top_k,
+                                                             edge_weight=data.edge_weight.to(device),
+                                                             edge_attr=data.edge_attr.to(device))
         elif use_edge_attr:
-
-            loss, acc, top_k_acc, prec, rec, f1 = model.test(x=data.x.float(), edge_index=data.edge_index, y=data.y,
-                                                             batch_index=data.batch, criterion=criterion, top_k=top_k,
-                                                             edge_attr=data.edge_attr)
+            loss, acc, top_k_acc, prec, rec, f1 = model.test(x=data.x.float().to(device),
+                                                             edge_index=data.edge_index.to(device),
+                                                             y=data.y.to(device),
+                                                             batch_index=data.batch.to(device),
+                                                             criterion=criterion,
+                                                             top_k=top_k,
+                                                             edge_attr=data.edge_attr.to(device))
         elif use_edge_weight:
-            loss, acc, top_k_acc, prec, rec, f1 = model.test(x=data.x.float(), edge_index=data.edge_index, y=data.y,
-                                                             batch_index=data.batch, criterion=criterion, top_k=top_k,
-                                                             edge_weight=data.edge_weight)
+            loss, acc, top_k_acc, prec, rec, f1 = model.test(x=data.x.float().to(device),
+                                                             edge_index=data.edge_index.to(device),
+                                                             y=data.y.to(device),
+                                                             batch_index=data.batch.to(device),
+                                                             criterion=criterion,
+                                                             top_k=top_k,
+                                                             edge_weight=data.edge_weight.to(device))
         else:
-            loss, acc, top_k_acc, prec, rec, f1 = model.test(x=data.x.float(), edge_index=data.edge_index, y=data.y,
-                                                             batch_index=data.batch, criterion=criterion, top_k=top_k)
-
+            loss, acc, top_k_acc, prec, rec, f1 = model.test(x=data.x.float().to(device),
+                                                             edge_index=data.edge_index.to(device),
+                                                             y=data.y.to(device),
+                                                             batch_index=data.batch.to(device),
+                                                             criterion=criterion,
+                                                             top_k=top_k)
+        torch.cuda.empty_cache()
         running_val_loss = running_val_loss + 1 / steps * (loss - running_val_loss)
         running_precision = running_precision + 1 / steps * (prec - running_precision)
         running_recall = running_recall + 1 / steps * (rec - running_recall)
@@ -261,6 +283,7 @@ def test_step_classifier(model: GraphClassifier, val_data: DataLoader, device: t
         running_f1 = running_f1 + 1 / steps * (f1 - running_f1)
 
         steps += 1
+
     return float(running_precision), float(running_recall), float(running_accuracy), float(running_topk_acc), \
         float(running_f1), float(running_val_loss)
 
@@ -279,6 +302,7 @@ def train_classifier(model: GraphClassifier, train_data: DataLoader, val_data: D
     os.makedirs(experiment_path, exist_ok=True)  # create experiment directory if it doesn't exist
 
     # Instantiate the summary writer
+    writer = None
     if use_tensorboard_log:
         writer = SummaryWriter(f'{experiment_path}_{experiment_name}_{epochs}_epochs')
 
@@ -325,6 +349,8 @@ def train_classifier(model: GraphClassifier, train_data: DataLoader, val_data: D
             top_k=top_k,
             criterion=criterion
         )
+
+        torch.cuda.empty_cache()
 
         if logger is None:
             print(
