@@ -38,7 +38,7 @@ BOUND_PDB_COLUMN: final = "BoundID"
 
 # Fold classification-related constants
 FOLD_CLASSIFICATION: final = os.path.join(DATA_PATH, "fold")
-FOLD_CLASSIFICATION_CSV: final = os.path.join(DATA_PATH, "fold_classification.csv")
+FOLD_CLASSIFICATION_CSV: final = os.path.join(FOLD_CLASSIFICATION, "fold_classification.csv")
 FOLD_FILE_PREFIX: final = os.path.join(FOLD_CLASSIFICATION, "amino_fold_")
 FOLD_FILE_EXTENSION: final = ".txt"
 N_FOLDS: final = 10

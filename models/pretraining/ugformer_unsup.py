@@ -285,15 +285,16 @@ def train_step_ugformer_unsup(model: UGformerV1,
         optimizer.zero_grad()
 
         # Get sample-softmax loss
-        loss, _ = model(x=data.x.to(device),
+        loss, _ = model(x=data.x.float().to(device),
                         sampled_neighbour_indices=selected_neighbours_indices,
                         input_y=node_indices_y)
+        loss = loss.mean()  # For some reason, loss is not averaged by default
 
         del _
         torch.cuda.empty_cache()
 
         # Gradient update
-        loss.backward()
+        loss.mean().backward()
 
         # Advance the optimizer state
         optimizer.step()
@@ -307,13 +308,22 @@ def train_step_ugformer_unsup(model: UGformerV1,
             logger.log(f"Steps: {steps}/{len(train_data)}, running loss {running_loss}")
 
         del loss
-        del _
         del data
         torch.cuda.empty_cache()
         torch.cuda.empty_cache()
         steps += 1
 
     return float(running_loss)
+
+
+def _divide_and_group_by_graph(output_vectors: torch.Tensor, ptr: torch.Tensor) -> torch.Tensor:
+    grouped_output_vectors = []
+    # For each graph in the batch
+    for i in range(1, len(ptr)):
+        # Get output vectors for the corresponding graph
+        graph_x = torch.sum(output_vectors[ptr[i - 1]:ptr[i]], dim=0)
+        grouped_output_vectors.append(graph_x)
+    return torch.stack(grouped_output_vectors)
 
 
 @torch.no_grad()
@@ -333,10 +343,11 @@ def test_step_ugformer_unsup(model: UGformerV1, train_data: DataLoader, val_data
         selected_neighbours_indices, _ = get_batch_data(batch_data=data, n_neighbours=n_neighbours, device=device,
                                                         global_graph_indexes=None)
 
-        # Get sample-softmax loss
-        _, output_vectors = model(x=data.x.to(device), sampled_neighbour_indices=selected_neighbours_indices,
+        # Get output embeddings
+        _, output_vectors = model(x=data.x.float().to(device), sampled_neighbour_indices=selected_neighbours_indices,
                                   input_y=None)
 
+        output_vectors = _divide_and_group_by_graph(output_vectors, ptr=data.ptr)
         x_values_train.append(output_vectors.detach().cpu())
         y_values_train.append(data.y.detach().cpu())
         del data
@@ -355,9 +366,11 @@ def test_step_ugformer_unsup(model: UGformerV1, train_data: DataLoader, val_data
         data = data.to(device)
 
         # Get sample-softmax loss
-        _, output_vectors = model(x=data.x, sampled_neighbour_indices=selected_neighbours_indices,
+        _, output_vectors = model(x=data.x.float().to(device),
+                                  sampled_neighbour_indices=selected_neighbours_indices,
                                   input_y=node_indices_y)
 
+        output_vectors = _divide_and_group_by_graph(output_vectors, ptr=data.ptr)
         x_values_val.append(output_vectors.detach().cpu())
         y_values_val.append(data.y.detach().cpu())
         del data
@@ -374,7 +387,7 @@ def test_step_ugformer_unsup(model: UGformerV1, train_data: DataLoader, val_data
     cls.fit(x_values_train, y_values_train)
     acc = cls.score(x_values_val, y_values_val)
     probs = cls.predict_proba(x_values_val)
-    auc = roc_auc_score(y_true=y_values_val, y_score=probs, average="macro")
+    auc = roc_auc_score(y_true=y_values_val, y_score=probs, average="macro", multi_class="ovo")
 
     return acc, auc
 

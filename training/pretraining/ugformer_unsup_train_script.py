@@ -12,8 +12,8 @@ from torch.optim import Adam, Adadelta
 import torchinfo
 
 
-BATCH_SIZE: final = 30
-EPOCHS: final = 2
+BATCH_SIZE: final = 200
+EPOCHS: final = 500
 EARLY_STOPPING_PATIENCE: final = 25
 EXPERIMENT_NAME: final = 'ugtransformer_test0'
 EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "pretraining", "ugtransformer")
@@ -30,8 +30,8 @@ def main():
     ds_val = load_dataset(PSCDB_CLEANED_VAL, dataset_type="pscdb")
     # ds_test = load_dataset(PSCDB_CLEANED_TEST, dataset_type="pscdb")
 
-    dl_train = DataLoader(ds_train, batch_size=BATCH_SIZE, shuffle=True)
-    dl_val = DataLoader(ds_val, batch_size=BATCH_SIZE, shuffle=True)
+    dl_train = DataLoader(ds_train, batch_size=min(BATCH_SIZE, len(ds_train)), shuffle=True)
+    dl_val = DataLoader(ds_val, batch_size=min(BATCH_SIZE, len(ds_val)), shuffle=True)
     # dl_test = DataLoader(ds_test, batch_size=BATCH_SIZE, shuffle=True)
 
     class_weights = torch.load(PSCDB_CLASS_WEIGHTS)
