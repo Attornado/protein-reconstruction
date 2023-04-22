@@ -12,7 +12,7 @@ from torch.optim import Adam, Adadelta
 import torchinfo
 
 
-BATCH_SIZE: final = 200
+BATCH_SIZE: final = 50  # was 200
 EPOCHS: final = 500
 EARLY_STOPPING_PATIENCE: final = 25
 EXPERIMENT_NAME: final = 'ugtransformer_test0'
@@ -21,7 +21,7 @@ RESTORE_CHECKPOINT: final = True
 USE_CLASS_WEIGHTS: final = True
 LABEL_SMOOTHING: final = 0.0
 IN_CHANNELS: final = 10
-CONF_COUNT_START: final = 0
+CONF_COUNT_START: final = 44
 TRAIN_GRAPH_INDEXES: final = PSCDB_GRAPH_INDEXES
 
 
