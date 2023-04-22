@@ -218,7 +218,7 @@ def create_fold_dataset_csv():
             for line in f:
                 pdb_code = line.strip()
                 fold_no = i
-                pair = [pdb_code, fold_no]
+                pair = [pdb_code.lower(), fold_no]
                 pdb_fold_pairs.append(pair)
 
     # create the CSV file
@@ -240,7 +240,7 @@ def create_enzymes_dataset_csv():
         no_enzymes = [line.strip() for line in no_enzymes_file]
 
     # Combine the lists and create a list of (pdb_code, enzyme) tuples
-    data = [(pdb_code, 'yes') for pdb_code in enzymes] + [(pdb_code, 'no') for pdb_code in no_enzymes]
+    data = [(pdb_code.lower(), 'yes') for pdb_code in enzymes] + [(pdb_code.lower(), 'no') for pdb_code in no_enzymes]
 
     # Write the output file
     with open(ENZYMES_CLASSIFICATION_CSV, 'w', newline='') as output_file:

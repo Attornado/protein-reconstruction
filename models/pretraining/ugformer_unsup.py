@@ -3,7 +3,7 @@ import os
 from tqdm import tqdm
 import numpy as np
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import roc_auc_score, f1_score, balanced_accuracy_score, log_loss
 import torch
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
@@ -384,9 +384,11 @@ def test_step_ugformer_unsup(model: UGformerV1, train_data: DataLoader, val_data
     x_values_train = torch.cat(x_values_train, dim=0).detach().cpu().numpy()
     y_values_train = torch.cat(y_values_train, dim=0).detach().cpu().numpy()
     cls = LogisticRegression(solver=SOLVER_LOGISTIC_REGRESSION, tol=0.001, class_weight='balanced')
+
     cls.fit(x_values_train, y_values_train)
     acc = cls.score(x_values_val, y_values_val)
     probs = cls.predict_proba(x_values_val)
+    # Use OvO because it's insensitive to class imbalance
     auc = roc_auc_score(y_true=y_values_val, y_score=probs, average="macro", multi_class="ovo")
 
     return acc, auc
