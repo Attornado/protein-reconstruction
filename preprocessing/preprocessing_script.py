@@ -14,14 +14,14 @@ from preprocessing.constants import PSCDB_PATH, PSCDB_CLEANED_TRAIN, PRETRAIN_CL
     ENZYMES_CLEANED_TRAIN, ENZYMES_CLEANED_VAL, ENZYMES_CLEANED_TEST, FOLD_CLASSIFICATION_CLEANED_TRAIN, \
     FOLD_CLASSIFICATION_CLEANED_VAL, FOLD_CLASSIFICATION_CLEANED_TEST, VAL_SIZE_FOLD, TEST_SIZE_FOLD
 from preprocessing.dataset.dataset_creation import create_dataset_pscdb, create_dataset_pretrain, load_dataset, \
-    create_dataset_pscdb_paired, create_dataset_enzymes
+    create_dataset_pscdb_paired, create_dataset_enzymes, create_dataset_fold_classification
 from preprocessing.dataset.paired_dataset import PairedDataLoader
 from preprocessing.utils import pscdb_read, get_uniprot_IDs_and_pdb_codes, train_test_validation_split, \
     get_pdb_paths_pscdb, read_others_original_format
 
 
 __INTEGRATE_OTHER_TYPE_PROTEINS: final = True
-__RECREATE_PSCDB: final = False
+__RECREATE_PSCDB: final = True
 __RECREATE_PRETRAINING: final = False
 __RECREATE_ENZYMES: final = True
 __RECREATE_FOLD: final = True
@@ -423,12 +423,12 @@ def main():
         )
 
         # Create ENZYMES classification datasets
-        ds_cl_train = create_dataset_enzymes(df_train, export_path=FOLD_CLASSIFICATION_CLEANED_TRAIN, in_memory=False,
-                                             store_params=True)
-        ds_cl_val = create_dataset_enzymes(df_val, export_path=FOLD_CLASSIFICATION_CLEANED_VAL, in_memory=False,
-                                           store_params=True)
-        ds_cl_test = create_dataset_enzymes(df_test, export_path=FOLD_CLASSIFICATION_CLEANED_TEST, in_memory=False,
-                                            store_params=True)
+        ds_cl_train = create_dataset_fold_classification(df_train, export_path=FOLD_CLASSIFICATION_CLEANED_TRAIN,
+                                                         in_memory=False, store_params=True)
+        ds_cl_val = create_dataset_fold_classification(df_val, export_path=FOLD_CLASSIFICATION_CLEANED_VAL,
+                                                       in_memory=False, store_params=True)
+        ds_cl_test = create_dataset_fold_classification(df_test, export_path=FOLD_CLASSIFICATION_CLEANED_TEST,
+                                                        in_memory=False, store_params=True)
 
         # Create data loader to check if everything's ok
         dl = DataLoader(ds_cl_train, batch_size=1, shuffle=True, drop_last=True)

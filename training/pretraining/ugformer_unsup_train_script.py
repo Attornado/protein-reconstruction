@@ -12,7 +12,8 @@ from torch.optim import Adam, Adadelta
 import torchinfo
 
 
-BATCH_SIZE: final = 50  # was 200
+BATCH_SIZE: final = 70  # was 200
+SMALLER_BATCH_SIZE: final = 25
 EPOCHS: final = 500
 EARLY_STOPPING_PATIENCE: final = 25
 EXPERIMENT_NAME: final = 'ugtransformer_test0'
@@ -21,7 +22,7 @@ RESTORE_CHECKPOINT: final = True
 USE_CLASS_WEIGHTS: final = True
 LABEL_SMOOTHING: final = 0.0
 IN_CHANNELS: final = 10
-CONF_COUNT_START: final = 44
+CONF_COUNT_START: final = 128
 TRAIN_GRAPH_INDEXES: final = PSCDB_GRAPH_INDEXES
 
 
@@ -96,6 +97,20 @@ def main():
                                         print(config)
 
                                     else:
+                                        if (h == 1024 and (nal > 1 or nl > 1)) or (h == 512 and nal >= 3):
+                                            dl_train = DataLoader(ds_train,
+                                                                  batch_size=min(SMALLER_BATCH_SIZE, len(ds_train)),
+                                                                  shuffle=True)
+                                            dl_val = DataLoader(ds_val,
+                                                                batch_size=min(SMALLER_BATCH_SIZE, len(ds_val)),
+                                                                shuffle=True)
+                                        else:
+                                            dl_train = DataLoader(ds_train,
+                                                                  batch_size=min(BATCH_SIZE, len(ds_train)),
+                                                                  shuffle=True)
+                                            dl_val = DataLoader(ds_val,
+                                                                batch_size=min(BATCH_SIZE, len(ds_val)),
+                                                                shuffle=True)
                                         learning_rate = lr
                                         ugformerv1 = UGformerV1(
                                             vocab_size=vocab_size,
