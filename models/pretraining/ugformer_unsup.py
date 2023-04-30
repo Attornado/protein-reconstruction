@@ -175,8 +175,9 @@ def get_global_node_indexes(batch_data: Data,
 
         # Get the global node start index of the i-th graph in the batch (e.g. 150, 200 means that, globally, the i-th
         # graph nodes start at the index 150 and end at 200)
-        global_start_index = global_graph_indexes[batch_data.name[i]][0]
-        global_end_index = global_graph_indexes[batch_data.name[i]][1]
+        name = batch_data.name[i] if type(batch_data.name[i]) != list else batch_data.name[i][0]
+        global_start_index = global_graph_indexes[name][0]
+        global_end_index = global_graph_indexes[name][1]
 
         # Get the tensor of the global indexes of the nodes of the i-th graph in the batch, and put them in the tensor
         global_node_indexes[start_index:end_index] = torch.arange(start=global_start_index, end=global_end_index)
@@ -363,7 +364,7 @@ def test_step_ugformer_unsup(model: UGformerV1, train_data: DataLoader, val_data
         selected_neighbours_indices, node_indices_y = get_batch_data(batch_data=data, n_neighbours=n_neighbours,
                                                                      device=device)
         # Move batch to device
-        data = data.to(device)
+        # data = data.to(device)
 
         # Get sample-softmax loss
         _, output_vectors = model(x=data.x.float().to(device),
@@ -457,9 +458,11 @@ def train_ugformer_unsup_inductive(model: UGformerV1,
         )
 
         # Do validation step
+        if val_train_data is None:
+            val_train_data = train_data
         acc, auc = test_step_ugformer_unsup(
             model=model,
-            train_data=train_data if val_train_data is None else val_train_data,
+            train_data=val_train_data,
             val_data=val_data,
             n_neighbours=n_neighbours,
             device=device

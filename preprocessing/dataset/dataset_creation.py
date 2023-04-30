@@ -19,6 +19,7 @@ from torch_geometric.transforms import BaseTransform
 from graphein.protein.features.nodes import meiler_embedding
 from preprocessing.dataset.edge_functions import add_k_nn_edges
 
+
 # Globally-visible constants
 EDGE_CONSTRUCTION_FUNCTIONS: final = frozenset([
     partial(add_k_nn_edges, k=5, long_interaction_threshold=0),  # was 3
@@ -750,7 +751,7 @@ def create_dataset_pretrain(pdb_paths: List[str], export_path: str, in_memory: b
 
 
 def load_dataset(path: str, dataset_type: str = "pscdb") -> Union[InMemoryProteinGraphDataset,
-ProteinGraphDataset, PairedProteinGraphDataset]:
+                                                                  ProteinGraphDataset, PairedProteinGraphDataset]:
     """
     Loads a protein graph cleaned dataset from a directory.
 
