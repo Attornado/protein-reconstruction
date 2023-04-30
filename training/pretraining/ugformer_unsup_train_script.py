@@ -13,23 +13,40 @@ import torchinfo
 
 
 BATCH_SIZE: final = 70  # was 200
-SMALLER_BATCH_SIZE: final = 25
+MEDIUM_BATCH_SIZE: final = 50
+SMALL_BATCH_SIZE: final = 25
+TINY_BATCH_SIZE: final = 10
 EPOCHS: final = 500
 EARLY_STOPPING_PATIENCE: final = 25
-EXPERIMENT_NAME: final = 'ugtransformer_test0'
+EXPERIMENT_NAME: final = 'ugtransformer_test1'
 EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "pretraining", "ugtransformer")
 RESTORE_CHECKPOINT: final = True
 USE_CLASS_WEIGHTS: final = True
 LABEL_SMOOTHING: final = 0.0
 IN_CHANNELS: final = 10
-CONF_COUNT_START: final = 128
-TRAIN_GRAPH_INDEXES: final = PSCDB_GRAPH_INDEXES
+CONF_COUNT_START: final = 0
+TRAIN_GRAPH_INDEXES: final = PRETRAIN_GRAPH_INDEXES
+TRAIN_DATASET: final = PRETRAIN_CLEANED_TRAIN
+TRAIN_DATASET_TYPE: final = "pretrain"
+VAL_DATASET: final = PSCDB_CLEANED_VAL
+VAL_DATASET_TYPE: final = "pscdb"
+ADDITIONAL_TRAIN_DATASET: final = PSCDB_CLEANED_TRAIN
+ADDITIONAL_TRAIN_DATASET_DATASET_TYPE: final = "pscdb"
 
 
 def main():
-    ds_train = load_dataset(PSCDB_CLEANED_TRAIN, dataset_type="pscdb")
-    ds_val = load_dataset(PSCDB_CLEANED_VAL, dataset_type="pscdb")
     # ds_test = load_dataset(PSCDB_CLEANED_TEST, dataset_type="pscdb")
+    if ADDITIONAL_TRAIN_DATASET is not None:
+        additional_ds_train = load_dataset(ADDITIONAL_TRAIN_DATASET, dataset_type=ADDITIONAL_TRAIN_DATASET_DATASET_TYPE)
+    else:
+        additional_ds_train = None
+    ds_train = load_dataset(TRAIN_DATASET, dataset_type=TRAIN_DATASET_TYPE)
+    ds_val = load_dataset(VAL_DATASET, dataset_type=VAL_DATASET_TYPE)
+
+    if ADDITIONAL_TRAIN_DATASET is not None:
+        additional_dl_train = DataLoader(ds_train, batch_size=min(BATCH_SIZE, len(additional_ds_train)), shuffle=True)
+    else:
+        additional_dl_train = None
 
     dl_train = DataLoader(ds_train, batch_size=min(BATCH_SIZE, len(ds_train)), shuffle=True)
     dl_val = DataLoader(ds_val, batch_size=min(BATCH_SIZE, len(ds_val)), shuffle=True)
@@ -50,7 +67,7 @@ def main():
     # best_model_auc = 0.24839743971824646  # was -1
     print(f"Loaded best_model_auc {best_model_auc}")
     conf_count = 0
-    
+
     # Load vocab size and global graph indexes
     try:
         global_graph_indexes = torch.load(TRAIN_GRAPH_INDEXES)
@@ -65,13 +82,13 @@ def main():
 
     grid_values = {
         'dropout': [0.5],
-        'hidden_size': [128, 256, 512, 1024],
-        'n_head': [1],
-        'n_neighbours': [4, 8, 16],
         'embedding_dim': [None],
-        "n_self_att_layers": [1, 2, 3, 4],
-        "n_layers": [1, 2, 3],
-        "learning_rate": [5e-5, 5e-4, 1e-4, 1e-3]
+        'n_head': [1],
+        "n_layers": [1, 2],
+        "n_self_att_layers": [3, 4],
+        'hidden_size': [512, 1024],
+        'n_neighbours': [4, 8],
+        "learning_rate": [5e-5, 5e-4]
     }
 
     for d in grid_values['dropout']:
@@ -97,14 +114,23 @@ def main():
                                         print(config)
 
                                     else:
-                                        if (h == 1024 and (nal > 1 or nl > 1)) or (h == 512 and nal >= 3):
+                                        if (h == 1024 and (nal > 1 or nl > 1)) or (h == 512 and nal >= 3 or nl >= 2) \
+                                                or (h == 1024 and ng >= 16):
+                                            if h == 1024 and (nal >= 3 and nl >= 2) or (ng == 16 and nl >= 2):
+                                                batch_size = TINY_BATCH_SIZE
+                                            elif h == 1024 and nal >= 2 or nl >= 2:
+                                                batch_size = SMALL_BATCH_SIZE
+                                            else:
+                                                batch_size = MEDIUM_BATCH_SIZE
+                                            print(f"Chosen batch size: {batch_size}")
                                             dl_train = DataLoader(ds_train,
-                                                                  batch_size=min(SMALLER_BATCH_SIZE, len(ds_train)),
+                                                                  batch_size=min(batch_size, len(ds_train)),
                                                                   shuffle=True)
                                             dl_val = DataLoader(ds_val,
-                                                                batch_size=min(SMALLER_BATCH_SIZE, len(ds_val)),
+                                                                batch_size=min(batch_size, len(ds_val)),
                                                                 shuffle=True)
                                         else:
+                                            print(f"Chosen batch size: {BATCH_SIZE}")
                                             dl_train = DataLoader(ds_train,
                                                                   batch_size=min(BATCH_SIZE, len(ds_train)),
                                                                   shuffle=True)
@@ -114,7 +140,7 @@ def main():
                                         learning_rate = lr
                                         ugformerv1 = UGformerV1(
                                             vocab_size=vocab_size,
-                                            feature_dim_size=IN_CHANNELS,
+                                            feature_dim_size=in_channels,
                                             ff_hidden_size=h,
                                             sampled_num=ng,
                                             num_self_att_layers=nal,
@@ -155,7 +181,7 @@ def main():
                                                                             f"n_{conf_count}")
                                         logger = Logger(filepath=os.path.join(full_experiment_path, "trainlog.txt"),
                                                         mode="a")
-                                        logger.log(f"Launching training for experiment UGFormerV2 n{conf_count} "
+                                        logger.log(f"Launching training for experiment UGFormerV1Unsup n{conf_count} "
                                                    f"with config \n {config} with learning rate "
                                                    f"{lr}, \n stored in "
                                                    f"{full_experiment_path}...")
@@ -166,7 +192,7 @@ def main():
                                             val_data=dl_val,
                                             n_neighbours=ng,
                                             global_graph_indexes=global_graph_indexes,
-                                            val_train_data=None,
+                                            val_train_data=additional_dl_train,
                                             epochs=EPOCHS,
                                             optimizer=optimizer,
                                             experiment_path=EXPERIMENT_PATH,
