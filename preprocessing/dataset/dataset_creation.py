@@ -42,7 +42,7 @@ DATASET_NAME_PSCDB: final = "pscdb_cleaned"
 DATASET_NAME_PRETRAINED: final = "pretrain_cleaned"
 FORMATS: final = frozenset(["pyg", "dgl"])
 VERBOSITIES_CONVERSION: final = frozenset(gmlc.SUPPORTED_VERBOSITY)
-DATASET_TYPES: final = frozenset(["pscdb", "pscdb_paired", "pretrain"])
+DATASET_TYPES: final = frozenset(["pscdb", "pscdb_paired", "pretrain", "enzymes", "fold"])
 
 # Local-only constants
 __DATAFRAME_PARAM_NAME: final = "df_param_name"
@@ -202,9 +202,12 @@ def create_dataset_pscdb_paired(df: pd.DataFrame,
     return ds
 
 
-def create_dataset_pscdb(df: pd.DataFrame, export_path: str, in_memory: bool = False, graph_format: str = "pyg",
-                         conversion_verbosity: str = "gnn", store_params: bool = False) -> \
-        Union[InMemoryProteinGraphDataset, ProteinGraphDataset]:
+def create_dataset_pscdb(df: pd.DataFrame,
+                         export_path: str,
+                         in_memory: bool = False,
+                         graph_format: str = "pyg",
+                         conversion_verbosity: str = "gnn",
+                         store_params: bool = False) -> Union[InMemoryProteinGraphDataset, ProteinGraphDataset]:
     """
     Takes a dataframe, extracts the PDB codes and the labels, creates a graphein config, a graph format converter and a
     dataset object.
@@ -341,10 +344,13 @@ def create_dataset_pscdb(df: pd.DataFrame, export_path: str, in_memory: bool = F
     return ds
 
 
-def create_dataset_fold_classification(df: pd.DataFrame, export_path: str, in_memory: bool = False,
-                                       graph_format: str = "pyg", conversion_verbosity: str = "gnn",
+def create_dataset_fold_classification(df: pd.DataFrame,
+                                       export_path: str,
+                                       in_memory: bool = False,
+                                       graph_format: str = "pyg",
+                                       conversion_verbosity: str = "gnn",
                                        store_params: bool = False) -> Union[InMemoryProteinGraphDataset,
-ProteinGraphDataset]:
+                                                                            ProteinGraphDataset]:
     """
     Takes a dataframe, extracts the PDB codes and the labels, creates a graphein config, a graph format converter and a
     dataset object.
@@ -481,9 +487,12 @@ ProteinGraphDataset]:
     return ds
 
 
-def create_dataset_enzymes(df: pd.DataFrame, export_path: str, in_memory: bool = False, graph_format: str = "pyg",
-                           conversion_verbosity: str = "gnn", store_params: bool = False) -> \
-        Union[InMemoryProteinGraphDataset, ProteinGraphDataset]:
+def create_dataset_enzymes(df: pd.DataFrame,
+                           export_path: str,
+                           in_memory: bool = False,
+                           graph_format: str = "pyg",
+                           conversion_verbosity: str = "gnn",
+                           store_params: bool = False) -> Union[InMemoryProteinGraphDataset, ProteinGraphDataset]:
     """
     Takes a dataframe, extracts the PDB codes and the labels, creates a graphein config, a graph format converter and a
     dataset object.
@@ -620,9 +629,12 @@ def create_dataset_enzymes(df: pd.DataFrame, export_path: str, in_memory: bool =
     return ds
 
 
-def create_dataset_pretrain(pdb_paths: List[str], export_path: str, in_memory: bool = False, graph_format: str = "pyg",
-                            conversion_verbosity: str = "gnn", store_params: bool = False) -> \
-        Union[InMemoryProteinGraphDataset, ProteinGraphDataset]:
+def create_dataset_pretrain(pdb_paths: List[str],
+                            export_path: str,
+                            in_memory: bool = False,
+                            graph_format: str = "pyg",
+                            conversion_verbosity: str = "gnn",
+                            store_params: bool = False) -> Union[InMemoryProteinGraphDataset, ProteinGraphDataset]:
     """
         Takes in a list of pdb files, and returns a dataset of graphs for protein reconstruction.
 
@@ -779,6 +791,10 @@ def load_dataset(path: str, dataset_type: str = "pscdb") -> Union[InMemoryProtei
         ds = create_dataset_pretrain(export_path=path, **params)
     elif dataset_type == "pscdb_paired":
         ds = create_dataset_pscdb_paired(export_path=path, **params)
+    elif dataset_type == "enzymes":
+        ds = create_dataset_enzymes(export_path=path, **params)
+    elif dataset_type == "fold":
+        ds = create_dataset_fold_classification(export_path=path, **params)
 
     return ds
 
