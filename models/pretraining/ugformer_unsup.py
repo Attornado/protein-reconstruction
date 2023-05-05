@@ -14,6 +14,7 @@ from torch.nn import TransformerEncoder, TransformerEncoderLayer
 from log.logger import Logger
 from models.layers import SerializableModule
 from models.pretraining.sampled_softmax import SampledSoftmax
+from preprocessing.constants import RANDOM_SEED
 from training.training_tools import EARLY_STOP_PATIENCE, EarlyStopping, MetricsHistoryTracer, FIGURE_SIZE_DEFAULT
 
 
@@ -384,7 +385,8 @@ def test_step_ugformer_unsup(model: UGformerV1, train_data: DataLoader, val_data
     y_values_val = torch.cat(y_values_val, dim=0).detach().cpu().numpy()
     x_values_train = torch.cat(x_values_train, dim=0).detach().cpu().numpy()
     y_values_train = torch.cat(y_values_train, dim=0).detach().cpu().numpy()
-    cls = LogisticRegression(solver=SOLVER_LOGISTIC_REGRESSION, tol=0.001, class_weight='balanced')
+    cls = LogisticRegression(solver=SOLVER_LOGISTIC_REGRESSION, tol=0.001, class_weight='balanced',
+                             random_state=RANDOM_SEED)
 
     cls.fit(x_values_train, y_values_train)
     acc = cls.score(x_values_val, y_values_val)
@@ -445,6 +447,40 @@ def train_ugformer_unsup_inductive(model: UGformerV1,
         name="Classifier training metrics"
     )
 
+    best_auc = 0
+    best_acc = 0
+    # Do validation step to ensure nothing is lost if restarting training
+    if val_train_data is None:
+        val_train_data = train_data
+    acc, auc = test_step_ugformer_unsup(
+        model=model,
+        train_data=val_train_data,
+        val_data=val_data,
+        n_neighbours=n_neighbours,
+        device=device
+    )
+
+    if auc > best_auc:
+        best_auc = auc
+        best_acc = acc
+
+    if logger is None:
+        print(
+            'Epoch: {:d}, Accuracy: {:.4f}, AUC: {:.4f}'.format(0, acc, auc)
+        )
+    else:
+        logger.log(
+            'Epoch: {:d}, Accuracy: {:.4f}, AUC: {:.4f}'
+            .format(0, acc, auc)
+        )
+
+    # Tensorboard state update
+    if use_tensorboard_log:
+        writer.add_scalar('accuracy', acc, 0)
+        writer.add_scalar('auc', auc, 0)
+
+    # Check for early-stopping stuff
+    monitor(-auc, model)  # check if accuracy/auc is better
     for epoch in range(0, epochs):
         # Do train step
         train_loss = train_step_ugformer_unsup(
@@ -467,6 +503,10 @@ def train_ugformer_unsup_inductive(model: UGformerV1,
             n_neighbours=n_neighbours,
             device=device
         )
+
+        if auc > best_auc:
+            best_auc = auc
+            best_acc = acc
 
         if logger is None:
             print(
@@ -538,6 +578,10 @@ def train_ugformer_unsup_inductive(model: UGformerV1,
         n_neighbours=n_neighbours,
         device=device
     )
+
+    if best_auc > auc:
+        auc = best_auc
+        acc = best_acc
 
     metrics = {
         "accuracy": acc,

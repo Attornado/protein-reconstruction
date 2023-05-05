@@ -6,7 +6,9 @@ from log.logger import Logger
 from models.pretraining.ugformer_unsup import UGformerV1, train_ugformer_unsup_inductive, compute_global_graph_indexes, \
     VOCAB_SIZE_KEY
 from preprocessing.constants import PSCDB_CLEANED_TRAIN, PSCDB_CLEANED_VAL, DATA_PATH, \
-    PSCDB_CLASS_WEIGHTS, PSCDB_GRAPH_INDEXES, PRETRAIN_CLEANED_TRAIN, PRETRAIN_GRAPH_INDEXES
+    PSCDB_CLASS_WEIGHTS, PSCDB_GRAPH_INDEXES, PRETRAIN_CLEANED_TRAIN, PRETRAIN_GRAPH_INDEXES,\
+    FOLD_CLASSIFICATION_CLEANED_TRAIN, FOLD_CLASSIFICATION_CLEANED_VAL, FOLD_CLASSIFICATION_CLASS_WEIGHTS, \
+    FOLD_CLASSIFICATION_GRAPH_INDEXES
 from preprocessing.dataset.dataset_creation import load_dataset
 from torch.optim import Adam, Adadelta
 import torchinfo
@@ -14,24 +16,23 @@ import torchinfo
 
 BATCH_SIZE: final = 70  # was 200
 MEDIUM_BATCH_SIZE: final = 50
-SMALL_BATCH_SIZE: final = 25
-TINY_BATCH_SIZE: final = 10
-EPOCHS: final = 500
-EARLY_STOPPING_PATIENCE: final = 25
-EXPERIMENT_NAME: final = 'ugtransformer_test1'
+SMALL_BATCH_SIZE: final = 50
+TINY_BATCH_SIZE: final = 50
+EPOCHS: final = 100
+EARLY_STOPPING_PATIENCE: final = 15
+EXPERIMENT_NAME: final = 'ugtransformer_test2'
 EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "pretraining", "ugtransformer")
 RESTORE_CHECKPOINT: final = True
-USE_CLASS_WEIGHTS: final = True
 LABEL_SMOOTHING: final = 0.0
 IN_CHANNELS: final = 10
 CONF_COUNT_START: final = 0
-TRAIN_GRAPH_INDEXES: final = PRETRAIN_GRAPH_INDEXES
-TRAIN_DATASET: final = PRETRAIN_CLEANED_TRAIN
-TRAIN_DATASET_TYPE: final = "pretrain"
-VAL_DATASET: final = PSCDB_CLEANED_VAL
-VAL_DATASET_TYPE: final = "pscdb"
-ADDITIONAL_TRAIN_DATASET: final = PSCDB_CLEANED_TRAIN
-ADDITIONAL_TRAIN_DATASET_DATASET_TYPE: final = "pscdb"
+TRAIN_GRAPH_INDEXES: final = FOLD_CLASSIFICATION_GRAPH_INDEXES
+TRAIN_DATASET: final = FOLD_CLASSIFICATION_CLEANED_TRAIN
+TRAIN_DATASET_TYPE: final = "fold"
+VAL_DATASET: final = FOLD_CLASSIFICATION_CLEANED_VAL
+VAL_DATASET_TYPE: final = "fold"
+ADDITIONAL_TRAIN_DATASET: final = FOLD_CLASSIFICATION_CLEANED_TRAIN
+ADDITIONAL_TRAIN_DATASET_DATASET_TYPE: final = "fold"
 
 
 def main():
@@ -44,7 +45,8 @@ def main():
     ds_val = load_dataset(VAL_DATASET, dataset_type=VAL_DATASET_TYPE)
 
     if ADDITIONAL_TRAIN_DATASET is not None:
-        additional_dl_train = DataLoader(ds_train, batch_size=min(BATCH_SIZE, len(additional_ds_train)), shuffle=True)
+        additional_dl_train = DataLoader(additional_ds_train, batch_size=min(BATCH_SIZE, len(additional_ds_train)),
+                                         shuffle=True)
     else:
         additional_dl_train = None
 
@@ -52,9 +54,8 @@ def main():
     dl_val = DataLoader(ds_val, batch_size=min(BATCH_SIZE, len(ds_val)), shuffle=True)
     # dl_test = DataLoader(ds_test, batch_size=BATCH_SIZE, shuffle=True)
 
-    class_weights = torch.load(PSCDB_CLASS_WEIGHTS)
+    # class_weights = torch.load(PSCDB_CLASS_WEIGHTS)
     in_channels = IN_CHANNELS
-    n_classes = len(class_weights)
     l2 = 0.0  # try 5e-4
     optim = "adam"
 
@@ -64,7 +65,6 @@ def main():
     except FileNotFoundError:
         best_model_auc = -1
 
-    # best_model_auc = 0.24839743971824646  # was -1
     print(f"Loaded best_model_auc {best_model_auc}")
     conf_count = 0
 

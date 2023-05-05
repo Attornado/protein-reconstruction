@@ -83,12 +83,16 @@ def main():
         ds_cl_val2 = create_dataset_pscdb_paired(df_val, export_path=PSCDB_PAIRED_CLEANED_VAL, store_params=True)
         ds_cl_test2 = create_dataset_pscdb_paired(df_test, export_path=PSCDB_PAIRED_CLEANED_TEST, store_params=True)
 
-        # Copy PSCDB PDB files to AlphaFold directory, otherwise pre-train dataset creation won't work cuz: "graphein cool!"
+        # Copy PSCDB PDB files to AlphaFold directory, otherwise pre-train dataset creation won't work cuz:
+        # "Graphein cool!"
         copy_all_pscdb_files = input("Copy all PSCDB .pdb files to alphafold directory (0: no, 1: yes)? ")
         if int(copy_all_pscdb_files) != 0:
-            shutil.copytree(src=os.path.join(PSCDB_CLEANED_TRAIN, PSCDB_PDBS_SUFFIX), dst=PATH_PDBS_DIR, dirs_exist_ok=True)
-            shutil.copytree(src=os.path.join(PSCDB_CLEANED_VAL, PSCDB_PDBS_SUFFIX), dst=PATH_PDBS_DIR, dirs_exist_ok=True)
-            shutil.copytree(src=os.path.join(PSCDB_CLEANED_TEST, PSCDB_PDBS_SUFFIX), dst=PATH_PDBS_DIR, dirs_exist_ok=True)
+            shutil.copytree(src=os.path.join(PSCDB_CLEANED_TRAIN, PSCDB_PDBS_SUFFIX), dst=PATH_PDBS_DIR,
+                            dirs_exist_ok=True)
+            shutil.copytree(src=os.path.join(PSCDB_CLEANED_VAL, PSCDB_PDBS_SUFFIX), dst=PATH_PDBS_DIR,
+                            dirs_exist_ok=True)
+            shutil.copytree(src=os.path.join(PSCDB_CLEANED_TEST, PSCDB_PDBS_SUFFIX), dst=PATH_PDBS_DIR,
+                            dirs_exist_ok=True)
 
         # Create pre-training datasets
         if __RECREATE_PRETRAINING:
