@@ -1,7 +1,7 @@
 import abc
 import os
 from abc import abstractmethod
-from typing import Callable, Optional, Union, Iterable
+from typing import Callable, Optional, Union, Iterable, Any
 from log.logger import Logger
 import torch
 from torch.utils.tensorboard import SummaryWriter
@@ -103,8 +103,14 @@ class GraphClassifier(SerializableModule):
     def config_dict(self, config_dict: dict):
         self.__config_dict = config_dict
 
-    def test(self, x: torch.Tensor, edge_index: torch.Tensor, y, batch_index: torch.Tensor = None,
-             criterion: ClassificationLoss = MulticlassClassificationLoss(), top_k: Optional[int] = None,
+    def test(self,
+             y,
+             y_hat: Optional[Any] = None,
+             x: Optional[torch.Tensor] = None,
+             edge_index: Optional[torch.Tensor] = None,
+             batch_index: torch.Tensor = None,
+             criterion: ClassificationLoss = MulticlassClassificationLoss(),
+             top_k: Optional[int] = None,
              *args, **kwargs) -> (float, Optional[float], float, float, float, float):
         """
         This function takes in a graph, and returns the loss, accuracy, top-k accuracy, precision, recall, and F1-score.
@@ -114,6 +120,7 @@ class GraphClassifier(SerializableModule):
         :param edge_index: The edge indices of the graph
         :type edge_index: torch.Tensor
         :param y: The target labels
+        :param y_hat: The optional predicted labels
         :param batch_index: The batch index of the nodes
         :type batch_index: torch.Tensor
         :param criterion: The loss function to use
@@ -127,7 +134,8 @@ class GraphClassifier(SerializableModule):
         n_classes = self.dim_target
 
         # Get predictions
-        y_hat = self(x.float(), edge_index, batch_index, *args, **kwargs)
+        if y_hat is None:
+            y_hat = self(x.float(), edge_index, batch_index, *args, **kwargs)
 
         # Compute loss
         loss = self.loss(y_hat=y_hat, y=y, criterion=criterion)
