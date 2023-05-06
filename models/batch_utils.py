@@ -89,19 +89,54 @@ def from_dense_batch(dense_batch: torch.Tensor, mask: torch.Tensor) -> (torch.Te
     return data_x, data_batch
 
 
-def generate_batch_cross_attention_mask(batch_padding_mask0: torch.Tensor,
-                                        batch_padding_mask1: torch.Tensor) -> torch.BoolTensor:
-    # Given tensor A with shape (B, L) and tensor B with shape (B, S)
-    # Reshape A to have shape (B, L, 1) and B to have shape (B, 1, S)
-    batch_padding_mask0 = batch_padding_mask0.unsqueeze(-1)
-    batch_padding_mask1 = batch_padding_mask1.unsqueeze(1)
+def generate_batch_cross_attention_mask(batch_padding_mask_query: torch.Tensor,
+                                        batch_padding_mask_key: torch.Tensor,
+                                        num_heads: int = 1) -> torch.BoolTensor:
+    """
+    This function generates a boolean mask to be used for multi-head attention (MHA) when computing the cross-attention
+    between query and key tensors. The function takes in two padding masks, one for the query tensor and the other for
+    the key tensor, as well as an optional argument specifying the number of heads to be used for MHA.
 
-    # Use broadcasting to obtain the desired tensor C with shape (B, L, S)
-    cross_attn_mask = batch_padding_mask0 & batch_padding_mask1
+    :param batch_padding_mask_query: A tensor with shape (B, L), where B is the batch size and L is the maximum length
+        of the query tensor sequence. This tensor contains True values in positions that should be masked, and False
+        values elsewhere.
+    :param batch_padding_mask_key: A tensor with shape (B, S), where B is the batch size and S is the maximum length of
+        the key tensor sequence. This tensor contains True values in positions that should be masked, and False values
+        elsewhere.
+    :param num_heads: An optional integer specifying the number of heads to be used for multi-head attention.
+        Default is 1.
+    :return: A boolean tensor with shape (B*num_heads, L, S) that can be used as the cross-attention mask
+        for MHA. The True positions in the mask indicate positions that should not be attended to, while the False
+        positions indicate positions that can be attended to.
+    """
+
+    # Given tensor X with shape (B, L) and tensor Y with shape (B, S)
+    # Reshape X to have shape (B, L, 1) and Y to have shape (B, 1, S)
+    batch_padding_mask_query = batch_padding_mask_query.unsqueeze(-1)
+    batch_padding_mask_key = batch_padding_mask_key.unsqueeze(1)
+
+    # If num_heads is greater than 1
+    if num_heads > 1:
+        # Reshape X to have shape (B, 1, L, 1) and Y to have shape (B, 1, 1, S)
+        batch_padding_mask_query = batch_padding_mask_query.unsqueeze(1)
+        batch_padding_mask_key = batch_padding_mask_key.unsqueeze(1)
+
+        # Replicate X and Y over each head, obtaining tensors with shapes (B, H, L, 1) and (B, H, 1, S)
+        batch_padding_mask_query = batch_padding_mask_query.repeat(1, num_heads, 1, 1)
+        batch_padding_mask_key = batch_padding_mask_key.repeat(1, num_heads, 1, 1)
+
+    # Use broadcasting to obtain the desired tensor Z with shape (B, L, S), or (B, H, L, S) if num_heads > 1
+    cross_attn_mask = torch.logical_and(batch_padding_mask_query, batch_padding_mask_key)
 
     # Invert True and False since True positions are not allowed to attend in MHA
-    cross_attn_mask = cross_attn_mask == False
+    cross_attn_mask = torch.logical_not(cross_attn_mask)
 
+    # If num_heads is greater than 1
+    if num_heads > 1:
+        # Aggregate batch and head dimensions, creating a tensor with shape (B*H, L, S)
+        cross_attn_mask = einops.rearrange(cross_attn_mask, "b h l s -> (b h) l s")
+
+    # noinspection PyTypeChecker
     return cross_attn_mask
 
 

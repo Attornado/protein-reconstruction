@@ -120,7 +120,7 @@ class RevSAGEConvEncoder(SerializableModule):
             x = F.gelu(x)
 
         # Apply dropout
-        x = F.dropout(x, p=self.dropout, training=self.training)
+        # x = F.dropout(x, p=self.dropout, training=self.training)
 
         # Apply second projection if required
         if self.lin2 is not None:
@@ -270,7 +270,7 @@ class RevGATConvEncoder(SerializableModule):
             x = F.gelu(x)
 
         # Apply dropout
-        x = F.dropout(x, p=self.dropout, training=self.training)
+        # x = F.dropout(x, p=self.dropout, training=self.training)
 
         # Apply second projection if required
         if self.lin2 is not None:
@@ -413,7 +413,7 @@ class RevGCNEncoder(SerializableModule):
             x = F.gelu(x)
 
         # Apply dropout
-        x = F.dropout(x, p=self.dropout, training=self.training)
+        # x = F.dropout(x, p=self.dropout, training=self.training)
 
         # Apply second projection if required
         if self.lin2 is not None:
@@ -564,7 +564,7 @@ class SimpleGCNEncoder(SerializableModule):
             x = F.gelu(x)
 
         # Apply dropout
-        x = F.dropout(x, p=self.dropout, training=self.training)
+        # x = F.dropout(x, p=self.dropout, training=self.training)
 
         # Apply second projection if required
         if self.lin2 is not None:
@@ -710,7 +710,7 @@ class ResGCN2ConvEncoder(SerializableModule):
             x = F.gelu(x)
 
         # Apply dropout
-        x = F.dropout(x, p=self.dropout, training=self.training)
+        # x = F.dropout(x, p=self.dropout, training=self.training)
 
         # Apply second projection if required
         if self.lin2 is not None:
@@ -863,7 +863,7 @@ class ResGCN2ConvEncoderV2(SerializableModule):
             x = F.gelu(x)
 
         # Apply dropout
-        x = F.dropout(x, p=self.dropout, training=self.training)
+        # x = F.dropout(x, p=self.dropout, training=self.training)
 
         # Apply second projection if required
         if self.lin2 is not None:
