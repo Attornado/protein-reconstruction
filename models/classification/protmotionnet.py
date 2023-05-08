@@ -1,18 +1,18 @@
 import os
 from typing import final, Callable, Type, Optional, Union, Any
-import einops
+# import einops
 import torch
 from torch import Tensor
 import torch.nn.functional as F
 from torch.nn import MultiheadAttention, TransformerEncoderLayer, TransformerEncoder
 from torch.utils.tensorboard import SummaryWriter
 from torch_geometric.data import Data
-from torch_geometric.loader import DataLoader
 from torch_geometric.nn.aggr import LSTMAggregation, SoftmaxAggregation, MaxAggregation, MeanAggregation, SumAggregation
 from torch_geometric.nn.dense import Linear  # , dense_diff_pool this has to be in the "future work"
-from torch_geometric.utils import to_dense_batch
+# from torch_geometric.utils import to_dense_batch
 from log.logger import Logger
-from models.batch_utils import generate_batch_cross_attention_mask, from_dense_batch
+from models.batch_utils import generate_batch_cross_attention_mask_v2
+# from models.batch_utils import generate_batch_cross_attention_mask, from_dense_batch
 from models.classification.classifiers import GraphClassifier, MulticlassClassificationLoss, ClassificationLoss
 from models.layers import SerializableModule
 from functools import partial
@@ -220,7 +220,7 @@ class PairedProtMotionNet(ProtMotionNet):
                                              x1: Optional[Tensor] = None,
                                              edge_index1: Optional[Tensor] = None,
                                              batch_index1: Optional[Tensor] = None,
-                                             *args, **kwargs):
+                                             *args, **kwargs) -> (torch.Tensor, torch.Tensor):
 
         # Check input
         if isinstance(x, tuple) and len(x) < 2:
@@ -263,6 +263,7 @@ class PairedProtMotionNet(ProtMotionNet):
         x = self._encoder(x, edge_index, *args, **kwargs)
         x1 = self._encoder(x1, edge_index1, *args, **kwargs)
 
+        '''
         # Convert to dense batch
         # TODO: this doesn't work as intended, must pass explicitly the max_nodes parameter
         x, mask0 = to_dense_batch(x=x, batch=batch_index, max_num_nodes=None, fill_value=0)
@@ -280,11 +281,15 @@ class PairedProtMotionNet(ProtMotionNet):
         # Key padding mask must be created according to the query sequence since the output shape of cross attention
         # from it, but invert True with False and False with True since True positions are not allowed to attend
         key_padding_mask = mask0 == False
+        '''
+        # Create attention mask according to batch indexes, for the purpose of not allowing nodes representing residues
+        # in different proteins (graphs) to attend to each other
+        attn_mask = generate_batch_cross_attention_mask_v2(batch_index_query=batch_index1, batch_index_key=batch_index)
 
         # Apply cross multi-head attention
         # TODO: check the longer between x and x1, so that the longer is used as query (using x1 should be fine however)
-        x, _ = self._multi_head_attention(query=x1, key=x, value=x, key_padding_mask=None,
-                                          need_weights=False, attn_mask=attn_mask)
+        x, _ = self._multi_head_attention(query=x1, key=x, value=x, key_padding_mask=None, need_weights=False,
+                                          attn_mask=attn_mask)
 
         # Add shortcut-connection with concat/add with the query
         x = x + x1
@@ -294,7 +299,7 @@ class PairedProtMotionNet(ProtMotionNet):
         del _
         torch.cuda.empty_cache()
 
-        return x, key_padding_mask, mask1
+        return x, attn_mask
 
     def forward(self,
                 x: Union[Tensor, tuple[Tensor, Tensor]],
@@ -305,6 +310,9 @@ class PairedProtMotionNet(ProtMotionNet):
                 batch_index1: Optional[Tensor] = None,
                 *args, **kwargs) -> torch.Tensor:
 
+        """
+        """
+        '''
         # Get cross multi-head attention embeddings
         x, _, batch_mask = self._get_multi_head_attention_embeddings(
             x=x,
@@ -328,6 +336,20 @@ class PairedProtMotionNet(ProtMotionNet):
 
         del _, batch_mask
         torch.cuda.empty_cache()
+        '''
+
+        x, attn_mask = self._get_multi_head_attention_embeddings(
+            x=x,
+            edge_index=edge_index,
+            batch_index=batch_index,
+            x1=x1,
+            edge_index1=edge_index1,
+            batch_index1=batch_index1,
+            *args,
+            **kwargs
+        )
+        del attn_mask
+        torch.cuda.empty_cache()
 
         # Apply readout aggregation
         x = self._readout_aggregation(x, index=batch_index1)
@@ -348,7 +370,7 @@ class PairedProtMotionNet(ProtMotionNet):
              batch_index1: Optional[Tensor] = None,
              criterion: ClassificationLoss = MulticlassClassificationLoss(),
              top_k: Optional[int] = None,
-             *args, **kwargs):
+             *args, **kwargs) -> (float, Optional[float], float, float, float, float):
         if y_hat is None:
             y_hat = self(x=x, edge_index=edge_index, batch_index=batch_index, x1=x1, edge_index1=edge_index1,
                          batch_index1=batch_index1)
@@ -407,12 +429,17 @@ class TransformerPairedProtMotionNet(PairedProtMotionNet):
                                    "ff_activation": self.__ff_activation, "n_blocks": self.__n_blocks})
         return constructor_params
 
-    def forward(self, x: Union[Tensor, tuple[Tensor, Tensor]], edge_index: Union[Tensor, tuple[Tensor, Tensor]],
-                batch_index: Tensor = None, x1: Optional[Tensor] = None, edge_index1: Optional[Tensor] = None,
-                batch_index1: Optional[Tensor] = None, *args, **kwargs):
+    def forward(self,
+                x: Union[Tensor, tuple[Tensor, Tensor]],
+                edge_index: Union[Tensor, tuple[Tensor, Tensor]],
+                batch_index: Tensor = None,
+                x1: Optional[Tensor] = None,
+                edge_index1: Optional[Tensor] = None,
+                batch_index1: Optional[Tensor] = None,
+                *args, **kwargs) -> torch.Tensor:
 
         # Get cross multi-head attention embeddings and masks
-        x, key_padding_mask, batch_mask = self._get_multi_head_attention_embeddings(
+        x, _ = self._get_multi_head_attention_embeddings(
             x=x,
             edge_index=edge_index,
             batch_index=batch_index,
@@ -423,17 +450,23 @@ class TransformerPairedProtMotionNet(PairedProtMotionNet):
             **kwargs
         )
 
-        # Apply transformer encoder to further process the embeddings
-        x = self._transformer_encoder(src=x, src_key_padding_mask=key_padding_mask)
+        del _
+        torch.cuda.empty_cache()
 
-        # Convert from (sequence_length, batch_size, embedding_size) to (batch_size, sequence_length, embedding_size)
+        # Generate attention mask to prevent nodes coming from different graphs to attend to each other
+        attn_mask = generate_batch_cross_attention_mask_v2(batch_index_query=batch_index1, batch_index_key=batch_index1)
+
+        # Apply transformer encoder to further process the embeddings
+        x = self._transformer_encoder(src=x, mask=attn_mask)
+
+        '''# Convert from (sequence_length, batch_size, embedding_size) to (batch_size, sequence_length, embedding_size)
         x = einops.rearrange(x, "s b f -> b s f")
 
         # Convert to PyG batch format again
-        x, _ = from_dense_batch(dense_batch=x, mask=batch_mask)
+        x, _ = from_dense_batch(dense_batch=x, mask=batch_mask)'''
 
         # Apply readout aggregation
-        x = self._readout_aggregation(x, index=batch_index)
+        x = self._readout_aggregation(x, index=batch_index1)
 
         # Apply dense layers for classification
         x = self._apply_dense_layers(x)

@@ -24,7 +24,7 @@ import einops
 
 
 def construct_mask_indices(sizes):
-    num_rows, num_cols = sum(sizes), len(sizes)
+    # num_rows, num_cols = sum(sizes), len(sizes)
 
     indices = []
     for i, size in enumerate(sizes):
@@ -125,7 +125,7 @@ def generate_batch_cross_attention_mask(batch_padding_mask_query: torch.Tensor,
         batch_padding_mask_query = batch_padding_mask_query.repeat(1, num_heads, 1, 1)
         batch_padding_mask_key = batch_padding_mask_key.repeat(1, num_heads, 1, 1)
 
-    # Use broadcasting to obtain the desired tensor Z with shape (B, L, S), or (B, H, L, S) if num_heads > 1
+    # Use broadcasting of AND to obtain the desired tensor Z with shape (B, L, S), or (B, H, L, S) if num_heads > 1
     cross_attn_mask = torch.logical_and(batch_padding_mask_query, batch_padding_mask_key)
 
     # Invert True and False since True positions are not allowed to attend in MHA
@@ -140,13 +140,48 @@ def generate_batch_cross_attention_mask(batch_padding_mask_query: torch.Tensor,
     return cross_attn_mask
 
 
+def generate_batch_cross_attention_mask_v2(batch_index_query: torch.Tensor,
+                                           batch_index_key: torch.Tensor) -> torch.BoolTensor:
+    """
+    This function generates a boolean mask to be used for multi-head attention (MHA) when computing the cross-attention
+    between query and key tensors. The function takes in two batch indexes, one for the query tensor and the other for
+    the key tensor, and returns a boolean mask bi-dimensional mask where  the [i, j] position is True, it means that the
+    i-th query node cannot attend to the j-th key node, meaning that batch_index_query[i] != batch_index_key[j], while
+    if the [i, j] position is False, then batch_index_query[i] = batch_index_key[j].
+
+    :param batch_index_query: A tensor with shape (L, ) mapping each node in the query batch to corresponding
+        graph (e.g. [0, 0, 0, 1, 1, 2, 2] indicates the the first 3 nodes belong to the graph 0, the subsequent 2 belong
+        to the graph 1, and the last 2 belong to the graph 2).
+    :param batch_index_key: A tensor with shape (S, ) mapping each node in the key batch to corresponding graph.
+
+    :return: A boolean tensor with shape (L, S) that can be used as the cross-attention mask for MHA. The True positions
+        in the mask indicate positions that should not be attended to, while the False positions indicate positions that
+        can be attended to. That is, since each position corresponds to a node, that if the [i, j] position is True, it
+        means that the i-th query node cannot attend to the j-th key node, and viceversa.
+    """
+
+    # Given tensor X with shape (L, ) and tensor Y with shape (S, )
+    # Reshape X to have shape (L, 1) and Y to have shape (1, S)
+    batch_index_query = batch_index_query.unsqueeze(-1)
+    batch_index_key = batch_index_key.unsqueeze(0)
+
+    # Use broadcasting of == operator between X and Y to obtain the desired tensor Z with shape (L, S)
+    cross_attn_mask = batch_index_query.eq(batch_index_key)
+
+    # Invert True and False since True positions are not allowed to attend in MHA
+    cross_attn_mask = torch.logical_not(cross_attn_mask)
+
+    # noinspection PyTypeChecker
+    return cross_attn_mask
+
+
 def test():
     batch_size = 3
     data = mock_batch(batch_size=batch_size)
 
     dense_data, mask = to_dense_batch(data.x, data.batch)
     output_data, output_batch = from_dense_batch(dense_data, mask)
-    print((data.x == output_data).all())
+    print((data.x.eq(output_data)).all())
     print((data.batch == output_batch).all())
     # create block diagonal matrix of batch
     # block size: [nodes_in_batch] x [nodes_in_batch]
