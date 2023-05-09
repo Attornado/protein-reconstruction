@@ -8,7 +8,7 @@ from torch.nn import MultiheadAttention, TransformerEncoderLayer, TransformerEnc
 from torch.utils.tensorboard import SummaryWriter
 from torch_geometric.data import Data
 from torch_geometric.nn.aggr import LSTMAggregation, SoftmaxAggregation, MaxAggregation, MeanAggregation, SumAggregation
-from torch_geometric.nn.dense import Linear  # , dense_diff_pool this has to be in the "future work"
+from torch_geometric.nn.dense import Linear, dense_diff_pool  # this has to be in the "future work"
 # from torch_geometric.utils import to_dense_batch
 from log.logger import Logger
 from models.batch_utils import generate_batch_cross_attention_mask_v2
@@ -610,6 +610,7 @@ def train_paired_classifier(model: PairedProtMotionNet,
                             top_k: int = 3,
                             logger: Optional[Logger] = None,
                             criterion: ClassificationLoss = MulticlassClassificationLoss(),
+                            scheduler=None,
                             use_tensorboard_log: bool = False) -> (torch.nn.Module, dict):
     # TODO: test this
     # Move model to device
@@ -697,6 +698,8 @@ def train_paired_classifier(model: PairedProtMotionNet,
             criterion=criterion,
             logger=None  # do not log epoch statistics to file
         )
+        if scheduler is not None:
+            scheduler.step()
 
         # Do validation step
         avg_precision, avg_recall, avg_accuracy, avg_topk_accuracy, avg_f1, val_loss = test_step_paired_classifier(

@@ -1,10 +1,12 @@
+import math
 import os
 import random
 from typing import final
 import torch
-from torch_geometric.loader import DataLoader
+from torch.optim.lr_scheduler import LambdaLR
 from log.logger import Logger
-from models.classification.classifiers import train_classifier, MulticlassClassificationLoss
+from torch_geometric.loader import ImbalancedSampler
+from models.classification.classifiers import MulticlassClassificationLoss
 from models.classification.protmotionnet import PairedProtMotionNet, train_paired_classifier
 from models.pretraining.encoders import RevGCNEncoder, RevGATConvEncoder, RevSAGEConvEncoder, ResGCN2ConvEncoderV2
 from models.classification.ugformer import GCN, GAT, SAGE
@@ -12,21 +14,24 @@ from preprocessing.constants import PSCDB_CLEANED_TRAIN, PSCDB_CLEANED_VAL, DATA
     PSCDB_CLASS_WEIGHTS, PSCDB_PAIRED_CLASS_WEIGHTS, PSCDB_PAIRED_CLEANED_TRAIN, PSCDB_PAIRED_CLEANED_VAL, \
     PSCDB_PAIRED_CLEANED_TEST, RANDOM_SEED
 from preprocessing.dataset.dataset_creation import load_dataset
-from torch.optim import Adam, Adadelta
+from torch.optim import Adam, Adadelta, AdamW
 import torchinfo
-
 from preprocessing.dataset.paired_dataset import PairedDataLoader
 
-BATCH_SIZE: final = 10
+
+BATCH_SIZE: final = 15
 EPOCHS: final = 1000
-EARLY_STOPPING_PATIENCE: final = 25
+WARM_UP_EPOCHS: final = 50
+WEIGHT_DECAY: final = 1e-4
+OPTIMIZER: final = "adamw"
+EARLY_STOPPING_PATIENCE: final = 35
 EXPERIMENT_NAME: final = 'paired_protmotionnet_test0'
 EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "classification", "paired_protmotionnet")
 RESTORE_CHECKPOINT: final = True
 USE_CLASS_WEIGHTS: final = True
 LABEL_SMOOTHING: final = 0.0
 IN_CHANNELS: final = 10
-CONF_COUNT_START: final = 0
+CONF_COUNT_START: final = 8
 
 
 def main():
@@ -35,15 +40,18 @@ def main():
     ds_val = load_dataset(PSCDB_PAIRED_CLEANED_VAL, dataset_type="pscdb_paired")
     # ds_test = load_dataset(PSCDB_CLEANED_TEST, dataset_type="pscdb")
 
-    dl_train = PairedDataLoader(ds_train, batch_size=BATCH_SIZE, shuffle=True)
-    dl_val = PairedDataLoader(ds_val, batch_size=BATCH_SIZE, shuffle=True)
+    ys_train = torch.stack([data.y for data in ds_train], dim=0).view(-1)
+    ys_val = torch.stack([data.y for data in ds_val], dim=0).view(-1)
+    sampler = ImbalancedSampler(dataset=ys_train, num_samples=int(len(ds_train)*1.5))
+    sampler2 = ImbalancedSampler(dataset=ys_val)
+    dl_train = PairedDataLoader(ds_train, batch_size=BATCH_SIZE, shuffle=False, sampler=sampler)
+    dl_val = PairedDataLoader(ds_val, batch_size=BATCH_SIZE, shuffle=False, sampler=sampler2)
     # dl_test = DataLoader(ds_test, batch_size=BATCH_SIZE, shuffle=True)
 
     class_weights = torch.load(PSCDB_PAIRED_CLASS_WEIGHTS)
     in_channels = IN_CHANNELS
     n_classes = len(class_weights)
-    l2 = 0.0  # try 5e-4
-    optim = "adam"
+    optim = OPTIMIZER
 
     try:
         path = os.path.join(EXPERIMENT_PATH, EXPERIMENT_NAME, "best_acc.pt")
@@ -59,12 +67,12 @@ def main():
 
     grid_values = {
         'dropout': [0.3],
-        "model_name": [GCN, SAGE, GAT],  # had GCN_MODEL_TYPE, GAT_MODEL_TYPE
+        "model_name": [SAGE],  # had GCN_MODEL_TYPE, GAT_MODEL_TYPE
         'embedding_dim': [32, 64, 128, 256],
         'n_heads_gat': [4],
         "dense_num": [2, 3],
         "n_layers": [1, 5, 20, 50, 100],
-        "learning_rate": [0.0001, 0.000001, 0.0000001]
+        "learning_rate": [0.0001, 0.0005, 0.00001]
     }
 
     for m in grid_values['model_name']:
@@ -129,18 +137,32 @@ def main():
                                     model = PairedProtMotionNet(
                                         encoder=encoder,
                                         encoder_out_channels=emb,
-                                        dense_units=[emb, n_classes] if dn == 2 else [emb, emb/2, n_classes],
+                                        dense_units=[emb, n_classes] if dn == 2 else [emb, int(emb/2), n_classes],
                                         dense_activations=["gelu", "linear"] if dn == 2 else ["gelu", "gelu", "linear"],
                                         dim_features=in_channels,
                                         dropout=d,
-                                        readout=random.choice(['add_pool', "mean_pool"]),
+                                        readout=random.choice(['add_pool']),
                                         num_heads=2
                                     )
-                                    if l2 > 0:
+
+                                    l2 = WEIGHT_DECAY
+                                    scheduler = None
+                                    if l2 > 0 and optim == "adam":
                                         optimizer = Adam(model.parameters(), lr=learning_rate,
                                                          weight_decay=l2)
                                     elif optim == "adam":
                                         optimizer = Adam(model.parameters(), lr=learning_rate)
+                                    elif optim == "adamw":
+                                        optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate,
+                                                                      betas=(0.9, 0.999), eps=1e-8,
+                                                                      weight_decay=WEIGHT_DECAY)
+                                        # warm_up + cosine weight decay
+                                        lr_plan = \
+                                            lambda cur_epoch: (cur_epoch + 1) / WARM_UP_EPOCHS \
+                                            if cur_epoch < WARM_UP_EPOCHS else \
+                                            (0.5 * (1.0 + math.cos(math.pi * (cur_epoch - WARM_UP_EPOCHS) /
+                                                                   (EPOCHS - WARM_UP_EPOCHS))))
+                                        scheduler = LambdaLR(optimizer, lr_lambda=lr_plan)
                                     else:
                                         optimizer = Adadelta(model.parameters())
 
@@ -191,7 +213,8 @@ def main():
                                         early_stopping_patience=EARLY_STOPPING_PATIENCE,
                                         criterion=MulticlassClassificationLoss(weights=class_weights,
                                                                                label_smoothing=LABEL_SMOOTHING),
-                                        logger=logger
+                                        logger=logger,
+                                        scheduler=scheduler
                                     )
 
                                     if best_model_acc < metrics['accuracy']:
