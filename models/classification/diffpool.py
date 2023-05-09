@@ -16,7 +16,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 from math import ceil
-from typing import Optional
+from typing import Optional, Any
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -103,6 +103,23 @@ class DiffPoolLayer(nn.Module):
         return x, adj, l, e
 
 
+class DiffPoolMulticlassClassificationLoss(MulticlassClassificationLoss):
+    """
+    DiffPool - No Link Prediction Loss, that one is outputed by the DiffPool layer
+    """
+
+    def forward(self, targets: torch.Tensor, *outputs: torch.Tensor) -> torch.Tensor:
+        if len(outputs) == 1:
+            outputs = outputs[0]
+        preds, lp_loss, ent_loss = outputs
+
+        if targets.dim() > 1 and targets.size(1) == 1:
+            targets = targets.squeeze(1)
+
+        loss = self._loss(preds, targets)
+        return loss + lp_loss + ent_loss
+
+
 class DiffPool(GraphClassifier):
     """
     Computes multiple DiffPoolLayers
@@ -171,8 +188,14 @@ class DiffPool(GraphClassifier):
         x = self.lin2(x)
         return x, l_total, e_total
 
-    def test(self, x: torch.Tensor, edge_index: torch.Tensor, y, batch_index: torch.Tensor = None,
-             criterion: ClassificationLoss = MulticlassClassificationLoss(), top_k: Optional[int] = None,
+    def test(self,
+             y,
+             y_hat: Optional[Any] = None,
+             x: Optional[torch.Tensor] = None,
+             edge_index: Optional[torch.Tensor] = None,
+             batch_index: torch.Tensor = None,
+             criterion: ClassificationLoss = DiffPoolMulticlassClassificationLoss(),
+             top_k: Optional[int] = None,
              *args, **kwargs) -> (float, Optional[float], float, float, float, float):
         """
         This function takes in a graph, and returns the loss, accuracy, top-k accuracy, precision, recall, and F1-score.
@@ -215,20 +238,3 @@ class DiffPool(GraphClassifier):
         f1 = f1_score(preds=y_hat, target=y, task='multiclass', num_classes=n_classes, average="weighted")
 
         return float(loss), float(acc), top_k_acc, prec, rec, f1
-
-
-class DiffPoolMulticlassClassificationLoss(MulticlassClassificationLoss):
-    """
-    DiffPool - No Link Prediction Loss, that one is outputed by the DiffPool layer
-    """
-
-    def forward(self, targets: torch.Tensor, *outputs: torch.Tensor) -> torch.Tensor:
-        if len(outputs) == 1:
-            outputs = outputs[0]
-        preds, lp_loss, ent_loss = outputs
-
-        if targets.dim() > 1 and targets.size(1) == 1:
-            targets = targets.squeeze(1)
-
-        loss = self._loss(preds, targets)
-        return loss + lp_loss + ent_loss
