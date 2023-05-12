@@ -1,4 +1,4 @@
-from typing import Optional, Union
+from typing import Optional, Union, final
 import torch
 import torch.nn.functional as F
 from torch.nn import LayerNorm, Linear
@@ -7,6 +7,8 @@ from models.layers import SAGEConvBlock, GATConvBlock, GCNConvBlock, GCN2ConvBlo
 
 
 class RevSAGEConvEncoder(SerializableModule):
+    MODEL_TYPE: final = "rev_sage"
+
     def __init__(self, in_channels: int, hidden_channels: int, out_channels: int, num_convs: int = 1,
                  dropout: float = 0.0, project: bool = False, root_weight: bool = True,
                  aggr: Optional[Union[str, list[str]]] = "mean", num_groups: int = 2, normalize_hidden: bool = True):
@@ -146,6 +148,8 @@ class RevSAGEConvEncoder(SerializableModule):
 
 
 class RevGATConvEncoder(SerializableModule):
+    MODEL_TYPE: final = "rev_gat"
+
     def __init__(self, in_channels: int, hidden_channels: int, out_channels: int, num_convs: int = 1,
                  dropout: float = 0.0, version: str = "v2", edge_dim: Optional[int] = None, heads: int = 1,
                  concat: bool = False, num_groups: int = 2, normalize_hidden: bool = True):
@@ -296,8 +300,10 @@ class RevGATConvEncoder(SerializableModule):
 
 
 class RevGCNEncoder(SerializableModule):
+    MODEL_TYPE: final = "rev_gcn"
+
     def __init__(self, in_channels: int, hidden_channels: int, out_channels: int, num_convs: int = 1,
-                 dropout: float = 0.0, improved: bool = False, cached: bool = False, add_self_loops: bool = True,
+                 dropout: float = 0.0, improved: bool = True, cached: bool = False, add_self_loops: bool = True,
                  normalize: bool = True, bias: bool = True, num_groups: int = 2, normalize_hidden: bool = True):
         super().__init__()
 
@@ -441,6 +447,8 @@ class RevGCNEncoder(SerializableModule):
 
 
 class SimpleGCNEncoder(SerializableModule):
+    MODEL_TYPE: final = "gcn"
+
     def __init__(self, in_channels: int, hidden_channels: int, out_channels: int, conv_dims: list[int],
                  dropout: float = 0.0, improved: bool = False, cached: bool = False, add_self_loops: bool = True,
                  normalize: bool = True, bias: bool = True, normalize_hidden: bool = True):
@@ -589,7 +597,7 @@ class SimpleGCNEncoder(SerializableModule):
         return params_dict
 
 
-class ResGCN2ConvEncoder(SerializableModule):
+'''class ResGCN2ConvEncoder(SerializableModule):
     def __init__(self, in_channels: int, hidden_channels: int, out_channels: int, alpha: float, num_convs: int = 1,
                  dropout: float = 0.0, shared_weights: bool = True, cached: bool = False, add_self_loops: bool = True,
                  normalize: bool = True, normalize_hidden: bool = True):
@@ -733,9 +741,12 @@ class ResGCN2ConvEncoder(SerializableModule):
             "normalize_hidden": self.__normalize_hidden
         }
         return params_dict
+'''
 
 
 class ResGCN2ConvEncoderV2(SerializableModule):
+    MODEL_TYPE: final = "gcn2"
+
     def __init__(self, in_channels: int, hidden_channels: int, out_channels: int, alpha: float = 0.5,
                  theta: float = 1.0, num_convs: int = 1, dropout: float = 0.0, shared_weights: bool = True,
                  cached: bool = False, add_self_loops: bool = True, normalize: bool = True,
@@ -804,7 +815,7 @@ class ResGCN2ConvEncoderV2(SerializableModule):
     @property
     def alpha(self) -> float:
         return self.__alpha
-    
+
     @property
     def theta(self) -> Optional[float]:
         return self.__theta
