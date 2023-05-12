@@ -59,6 +59,10 @@ class PairedData(Data):
         """
         self[self.__B_KEY] = a
 
+    @property
+    def num_nodes(self) -> int:
+        return self.a.num_nodes + self.b.num_nodes
+
 
 class PairedProteinGraphDataset(Dataset):
 

@@ -5,7 +5,7 @@ from typing import final
 import torch
 from torch.optim.lr_scheduler import LambdaLR
 from log.logger import Logger
-from torch_geometric.loader import ImbalancedSampler
+from torch_geometric.loader import ImbalancedSampler, DynamicBatchSampler
 from models.classification.classifiers import MulticlassClassificationLoss
 from models.classification.protmotionnet import PairedProtMotionNet, train_paired_classifier
 from models.pretraining.encoders import RevGCNEncoder, RevGATConvEncoder, RevSAGEConvEncoder, ResGCN2ConvEncoderV2
@@ -14,12 +14,12 @@ from preprocessing.constants import PSCDB_CLEANED_TRAIN, PSCDB_CLEANED_VAL, DATA
     PSCDB_CLASS_WEIGHTS, PSCDB_PAIRED_CLASS_WEIGHTS, PSCDB_PAIRED_CLEANED_TRAIN, PSCDB_PAIRED_CLEANED_VAL, \
     PSCDB_PAIRED_CLEANED_TEST, RANDOM_SEED
 from preprocessing.dataset.dataset_creation import load_dataset
-from torch.optim import Adam, Adadelta, AdamW
+from torch.optim import Adam, Adadelta
 import torchinfo
 from preprocessing.dataset.paired_dataset import PairedDataLoader
 
 
-BATCH_SIZE: final = 15
+BATCH_SIZE: final = 10
 EPOCHS: final = 1000
 WARM_UP_EPOCHS: final = 50
 WEIGHT_DECAY: final = 1e-4
@@ -29,9 +29,12 @@ EXPERIMENT_NAME: final = 'paired_protmotionnet_test0'
 EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "classification", "paired_protmotionnet")
 RESTORE_CHECKPOINT: final = True
 USE_CLASS_WEIGHTS: final = True
-LABEL_SMOOTHING: final = 0.0
+USE_UNBALANCED_SAMPLER: final = False
+USE_DYNAMIC_BATCH: final = True
+DYNAMIC_BATCH_SIZE: final = 25000
+LABEL_SMOOTHING: final = 0.1
 IN_CHANNELS: final = 10
-CONF_COUNT_START: final = 8
+CONF_COUNT_START: final = 84
 
 
 def main():
@@ -42,10 +45,20 @@ def main():
 
     ys_train = torch.stack([data.y for data in ds_train], dim=0).view(-1)
     ys_val = torch.stack([data.y for data in ds_val], dim=0).view(-1)
-    sampler = ImbalancedSampler(dataset=ys_train, num_samples=int(len(ds_train)*1.5))
-    sampler2 = ImbalancedSampler(dataset=ys_val)
-    dl_train = PairedDataLoader(ds_train, batch_size=BATCH_SIZE, shuffle=False, sampler=sampler)
-    dl_val = PairedDataLoader(ds_val, batch_size=BATCH_SIZE, shuffle=False, sampler=sampler2)
+
+    if USE_UNBALANCED_SAMPLER:
+        sampler = ImbalancedSampler(dataset=ys_train, num_samples=int(len(ds_train)*1.5))
+        sampler2 = ImbalancedSampler(dataset=ys_val, num_samples=int(len(ds_val)*3))
+        dl_train = PairedDataLoader(ds_train, batch_size=BATCH_SIZE, shuffle=False, sampler=sampler)
+        dl_val = PairedDataLoader(ds_val, batch_size=BATCH_SIZE, shuffle=False, sampler=sampler2)
+    elif USE_DYNAMIC_BATCH:
+        sampler = DynamicBatchSampler(ds_train, max_num=DYNAMIC_BATCH_SIZE)
+        sampler2 = DynamicBatchSampler(ds_val, max_num=DYNAMIC_BATCH_SIZE)
+        dl_train = PairedDataLoader(ds_train, batch_sampler=sampler, shuffle=False)
+        dl_val = PairedDataLoader(ds_val, batch_sampler=sampler2, shuffle=False)
+    else:
+        dl_train = PairedDataLoader(ds_train, batch_size=BATCH_SIZE, shuffle=True)
+        dl_val = PairedDataLoader(ds_val, batch_size=BATCH_SIZE, shuffle=True)
     # dl_test = DataLoader(ds_test, batch_size=BATCH_SIZE, shuffle=True)
 
     class_weights = torch.load(PSCDB_PAIRED_CLASS_WEIGHTS)
@@ -59,15 +72,12 @@ def main():
     except FileNotFoundError:
         best_model_acc = -1
 
-    # best_model_acc = 0.24839743971824646  # was -1
     print(f"Loaded best_model_acc {best_model_acc}")
-    best_conf = None
-    best_lr = None
     conf_count = 0
 
     grid_values = {
         'dropout': [0.3],
-        "model_name": [SAGE],  # had GCN_MODEL_TYPE, GAT_MODEL_TYPE
+        "model_name": [GCN],  # had GCN, GAT, SAGE
         'embedding_dim': [32, 64, 128, 256],
         'n_heads_gat': [4],
         "dense_num": [2, 3],
@@ -142,7 +152,7 @@ def main():
                                         dim_features=in_channels,
                                         dropout=d,
                                         readout=random.choice(['add_pool']),
-                                        num_heads=2
+                                        num_heads=4
                                     )
 
                                     l2 = WEIGHT_DECAY
