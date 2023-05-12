@@ -160,8 +160,7 @@ class DiffPool(GraphClassifier):
         self.lin1 = nn.Linear(final_embed_dim_output, dim_embedding_MLP)
         self.lin2 = nn.Linear(dim_embedding_MLP, dim_target)
 
-    def forward(self, x, edge_index, batch):
-
+    def get_embeddings(self, x: torch.Tensor, edge_index: torch.Tensor, batch: torch.Tensor):
         x, mask = to_dense_batch(x, batch=batch)
         adj = to_dense_adj(edge_index, batch=batch)
         # data = ToDense(data.num_nodes)(data)
@@ -184,6 +183,34 @@ class DiffPool(GraphClassifier):
         x_all.append(torch.max(x, dim=1)[0])
 
         x = torch.cat(x_all, dim=1)  # shape (batch, feature_size x diffpool layers)
+
+        return x, l_total, e_total
+
+    def forward(self, x, edge_index, batch):
+
+        '''x, mask = to_dense_batch(x, batch=batch)
+        adj = to_dense_adj(edge_index, batch=batch)
+        # data = ToDense(data.num_nodes)(data)
+        # TODO describe mask shape and how batching works
+
+        # adj, mask, x = data.adj, data.mask, data.x
+        x_all, l_total, e_total = [], 0, 0
+
+        for i in range(self.num_diffpool_layers):
+            if i != 0:
+                mask = None
+
+            x, adj, l, e = self.diffpool_layers[i](x, adj, mask)  # x has shape (batch, MAX_no_nodes, feature_size)
+            x_all.append(torch.max(x, dim=1)[0])
+
+            l_total += l
+            e_total += e
+
+        x = self.final_embed(x, adj)
+        x_all.append(torch.max(x, dim=1)[0])
+
+        x = torch.cat(x_all, dim=1)  # shape (batch, feature_size x diffpool layers)'''
+        x, l_total, e_total = self.get_embeddings(x=x, edge_index=edge_index, batch=batch)
         x = F.relu(self.lin1(x))
         x = self.lin2(x)
         return x, l_total, e_total

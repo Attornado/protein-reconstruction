@@ -21,8 +21,8 @@ from preprocessing.dataset.paired_dataset import PairedDataLoader
 
 BATCH_SIZE: final = 10
 EPOCHS: final = 1000
-WARM_UP_EPOCHS: final = 50
-WEIGHT_DECAY: final = 1e-4
+WARM_UP_EPOCHS: final = 80
+WEIGHT_DECAY: final = 0
 OPTIMIZER: final = "adamw"
 EARLY_STOPPING_PATIENCE: final = 35
 EXPERIMENT_NAME: final = 'paired_protmotionnet_test0'
@@ -32,9 +32,9 @@ USE_CLASS_WEIGHTS: final = True
 USE_UNBALANCED_SAMPLER: final = False
 USE_DYNAMIC_BATCH: final = True
 DYNAMIC_BATCH_SIZE: final = 25000
-LABEL_SMOOTHING: final = 0.1
+LABEL_SMOOTHING: final = 0.0
 IN_CHANNELS: final = 10
-CONF_COUNT_START: final = 84
+CONF_COUNT_START: final = 60
 
 
 def main():
@@ -76,10 +76,10 @@ def main():
     conf_count = 0
 
     grid_values = {
-        'dropout': [0.3],
-        "model_name": [GCN],  # had GCN, GAT, SAGE
+        'dropout': [0.1],
+        "model_name": [GAT],  # had GCN, GAT, SAGE
         'embedding_dim': [32, 64, 128, 256],
-        'n_heads_gat': [4],
+        'n_heads_gat': [16],
         "dense_num": [2, 3],
         "n_layers": [1, 5, 20, 50, 100],
         "learning_rate": [0.0001, 0.0005, 0.00001]
@@ -92,10 +92,10 @@ def main():
                     for d in grid_values['dropout']:
                         for lr in grid_values['learning_rate']:
                             for nh in grid_values['n_heads_gat'] if m == GAT else [1]:
-                                d = random.choice([d, d, d, 0.4, 0.2, 0.1])
+                                d = random.choice([d, d, d, 0.2, 0.2])
                                 if nl == 50:
                                     nl = random.choice([nl, 80])
-                                nh = random.choice([nh, 8])
+                                nh = random.choice([nh, 32])
                                 config = {
                                     'dropout': d,
                                     "model_name": m,
