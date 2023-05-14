@@ -14,10 +14,12 @@ from log.logger import Logger
 from models.batch_utils import generate_batch_cross_attention_mask_v2
 # from models.batch_utils import generate_batch_cross_attention_mask, from_dense_batch
 from models.classification.classifiers import GraphClassifier, MulticlassClassificationLoss, ClassificationLoss
+from models.classification.diffpool import DiffPool, DiffPoolMulticlassClassificationLoss
 from models.layers import SerializableModule
 from functools import partial
 from preprocessing.dataset.paired_dataset import PairedDataLoader
-from training.training_tools import EARLY_STOP_PATIENCE, EarlyStopping, MetricsHistoryTracer, FIGURE_SIZE_DEFAULT
+from training.training_tools import EARLY_STOP_PATIENCE, EarlyStopping, MetricsHistoryTracer, FIGURE_SIZE_DEFAULT, \
+    ACCURACY_METRIC, VAL_LOSS_METRIC, F1_METRIC
 
 
 CLASSES: final = 7
@@ -213,14 +215,14 @@ class PairedProtMotionNet(ProtMotionNet):
         constructor_params.update({"num_heads": self.__num_heads, "vdim": self.__vdim, "kdim": self.__kdim})
         return constructor_params
 
-    def _get_multi_head_attention_embeddings(self,
-                                             x: Union[Tensor, tuple[Tensor, Tensor]],
-                                             edge_index: Union[Tensor, tuple[Tensor, Tensor]],
-                                             batch_index: Optional[Union[Tensor, tuple[Tensor, Tensor]]] = None,
-                                             x1: Optional[Tensor] = None,
-                                             edge_index1: Optional[Tensor] = None,
-                                             batch_index1: Optional[Tensor] = None,
-                                             *args, **kwargs) -> (torch.Tensor, torch.Tensor):
+    def _get_cross_embeddings(self,
+                              x: Union[Tensor, tuple[Tensor, Tensor]],
+                              edge_index: Union[Tensor, tuple[Tensor, Tensor]],
+                              batch_index: Optional[Union[Tensor, tuple[Tensor, Tensor]]] = None,
+                              x1: Optional[Tensor] = None,
+                              edge_index1: Optional[Tensor] = None,
+                              batch_index1: Optional[Tensor] = None,
+                              *args, **kwargs) -> (torch.Tensor, torch.Tensor):
 
         # Check input
         if isinstance(x, tuple) and len(x) < 2:
@@ -338,7 +340,7 @@ class PairedProtMotionNet(ProtMotionNet):
         torch.cuda.empty_cache()
         '''
 
-        x, attn_mask = self._get_multi_head_attention_embeddings(
+        x, attn_mask = self._get_cross_embeddings(
             x=x,
             edge_index=edge_index,
             batch_index=batch_index,
@@ -439,7 +441,7 @@ class TransformerPairedProtMotionNet(PairedProtMotionNet):
                 *args, **kwargs) -> torch.Tensor:
 
         # Get cross multi-head attention embeddings and masks
-        x, _ = self._get_multi_head_attention_embeddings(
+        x, _ = self._get_cross_embeddings(
             x=x,
             edge_index=edge_index,
             batch_index=batch_index,
@@ -472,6 +474,152 @@ class TransformerPairedProtMotionNet(PairedProtMotionNet):
         x = self._apply_dense_layers(x)
 
         return x
+
+
+class _DiffPoolEmbedding(DiffPool):
+    """Custom DiffPool class to change default parameters in DiffPool forward()"""
+    def __init__(self, dim_features, dim_target, config):
+        super().__init__(dim_features, dim_target, config)
+
+    def forward(self, x, edge_index, batch, apply_first_linear: bool = True, apply_second_linear: bool = False):
+        return super().forward(x, edge_index, batch, apply_first_linear=apply_first_linear,
+                               apply_second_linear=apply_second_linear)
+
+
+class DiffPoolPairedProtMotionNet(PairedProtMotionNet):
+    def __init__(self, diff_pool_config: dict, encoder_out_channels: int, dense_units: list[int],
+                 dense_activations: list[str], dim_features: int, dropout: float = 0.0):
+        encoder = _DiffPoolEmbedding(dim_features=dim_features, dim_target=dense_units[-1], config=diff_pool_config)
+        super().__init__(encoder=encoder, encoder_out_channels=encoder_out_channels*2, dense_units=dense_units,
+                         dense_activations=dense_activations, dim_features=dim_features, dropout=dropout, num_heads=1)
+        self.__diff_pool_config = diff_pool_config
+
+    @property
+    def diff_pool_config(self):
+        return self.__diff_pool_config
+
+    def serialize_constructor_params(self, *args, **kwargs) -> dict:
+        constructor_params = super().serialize_constructor_params(*args, **kwargs)
+        del constructor_params["encoder"]
+        constructor_params["diff_pool_config"] = self.diff_pool_config
+        return constructor_params
+
+    @classmethod
+    def from_constructor_params(cls,
+                                constructor_params: dict,
+                                *args, **kwargs):
+        cls(**constructor_params)
+
+    def _get_cross_embeddings(self,
+                              x: Union[Tensor, tuple[Tensor, Tensor]],
+                              edge_index: Union[Tensor, tuple[Tensor, Tensor]],
+                              batch_index: Optional[Union[Tensor, tuple[Tensor, Tensor]]] = None,
+                              x1: Optional[Tensor] = None,
+                              edge_index1: Optional[Tensor] = None,
+                              batch_index1: Optional[Tensor] = None,
+                              *args, **kwargs) -> (torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor):
+        # Check input
+        if isinstance(x, tuple) and len(x) < 2:
+            raise ValueError(f"Exactly 2 x tensors must be given to the {self.__class__} forward() method. {len(x)} "
+                             f"given.")
+        elif not isinstance(x, tuple) and x1 is None:
+            raise ValueError(f"Exactly 2 x tensors must be given to the {self.__class__} forward() method. Just 1 "
+                             f"given.")
+
+        if isinstance(edge_index, tuple) and len(edge_index) < 2:
+            raise ValueError(f"Exactly 2 edge indexes must be given to the {self.__class__} forward() method. "
+                             f"{len(edge_index)} given.")
+        elif not isinstance(edge_index, tuple) and edge_index1 is None:
+            raise ValueError(f"Exactly 2 edge index tensors must be given to the {self.__class__} forward() method. "
+                             f"Just 1 given.")
+        if batch_index is not None and isinstance(batch_index, tuple) and len(batch_index) < 2:
+            raise ValueError(f"Exactly 2 batch index tensor must be given to the {self.__class__} forward() method. "
+                             f"{len(batch_index)} given.")
+        elif batch_index is not None and not isinstance(batch_index, tuple) and batch_index1 is None:
+            raise ValueError(f"Exactly 2 batch index tensors must be given to the {self.__class__} forward() method. "
+                             f"Just 1 given.")
+
+        # Setup the two graphs
+        if isinstance(x, tuple):
+            x1: Tensor = x[1]
+            x: Tensor = x[0]
+        if isinstance(edge_index, tuple):
+            edge_index1: Tensor = edge_index[1]
+            edge_index: Tensor = edge_index[0]
+        if batch_index is not None and isinstance(batch_index, tuple):
+            batch_index1: Tensor = batch_index[1]
+            batch_index: Tensor = batch_index[0]
+
+        # Assume batch is a single graph if batch_index is not given
+        elif batch_index is None:
+            batch_index = torch.zeros(size=(x.shape[-2],)).type(torch.int64)
+            batch_index1 = torch.zeros(size=(x1.shape[-2],)).type(torch.int64)
+
+        # Extract features with encoder, getting additional losses
+        x, lp_loss, h_loss = self._encoder(x, edge_index, batch_index, *args, **kwargs)
+        x1, lp_loss2, h_loss2 = self._encoder(x1, edge_index1, batch_index1, *args, **kwargs)
+
+        lp_loss = (lp_loss + lp_loss2) / 2
+        h_loss = (h_loss + h_loss2) / 2
+        del lp_loss2, h_loss2
+        torch.cuda.empty_cache()
+
+        # Add shortcut-connection with concat/add with the query
+        x = torch.cat([x, x1], dim=1)
+
+        # Free memory
+        del x1  # no need to further memorize this
+        torch.cuda.empty_cache()
+
+        return x, lp_loss, h_loss
+
+    def forward(self,
+                x: Union[Tensor, tuple[Tensor, Tensor]],
+                edge_index: Union[Tensor, tuple[Tensor, Tensor]],
+                batch_index: Optional[Tensor] = None,
+                x1: Optional[Tensor] = None,
+                edge_index1: Optional[Tensor] = None,
+                batch_index1: Optional[Tensor] = None,
+                *args, **kwargs) -> (torch.Tensor, torch.Tensor, torch.Tensor):
+        x, lp_loss, hp_loss = self._get_cross_embeddings(
+            x=x,
+            edge_index=edge_index,
+            batch_index=batch_index,
+            x1=x1,
+            edge_index1=edge_index1,
+            batch_index1=batch_index1,
+            *args,
+            **kwargs
+        )
+
+        # Apply readout aggregation
+        # x = self._readout_aggregation(x, index=batch_index1)
+
+        # Apply dense layers for classification
+        x = self._apply_dense_layers(x)
+
+        # noinspection PyTypeChecker
+        return x, lp_loss, hp_loss
+
+    def test(self,
+             y,
+             y_hat: Optional[Any] = None,
+             x: Union[Tensor, tuple[Tensor, Tensor]] = None,
+             edge_index: Union[Tensor, tuple[Tensor, Tensor]] = None,
+             batch_index: Tensor = None,
+             x1: Optional[Tensor] = None,
+             edge_index1: Optional[Tensor] = None,
+             batch_index1: Optional[Tensor] = None,
+             criterion: ClassificationLoss = DiffPoolMulticlassClassificationLoss(),
+             top_k: Optional[int] = None,
+             *args, **kwargs) -> (float, Optional[float], float, float, float, float):
+        if y_hat is None:
+            y_hat = self(x=x, edge_index=edge_index, batch_index=batch_index, x1=x1, edge_index1=edge_index1,
+                         batch_index1=batch_index1)
+
+        # DiffPool test
+        return self._encoder.test(y=y, y_hat=y_hat, x=None, edge_index=None, batch_index=None,
+                                  criterion=criterion, top_k=top_k)
 
 
 def train_step_paired_classifier(model: PairedProtMotionNet,
@@ -607,10 +755,11 @@ def train_paired_classifier(model: PairedProtMotionNet,
                             experiment_name: str,
                             early_stopping_patience: int = EARLY_STOP_PATIENCE,
                             early_stopping_delta: float = 0,
-                            top_k: int = 3,
+                            top_k: int = 2,
                             logger: Optional[Logger] = None,
                             criterion: ClassificationLoss = MulticlassClassificationLoss(),
                             scheduler=None,
+                            monitor_metric: str = VAL_LOSS_METRIC,
                             use_tensorboard_log: bool = False) -> (torch.nn.Module, dict):
     # TODO: test this
     # Move model to device
@@ -686,7 +835,11 @@ def train_paired_classifier(model: PairedProtMotionNet,
         writer.add_scalar('avg_f1', avg_f1, 0)
 
     # Check for early-stopping stuff
-    monitor(val_loss, model)
+    monitor_metric = monitor_metric.lower()
+    if monitor_metric == VAL_LOSS_METRIC:
+        monitor(val_loss, model)
+    elif monitor_metric == ACCURACY_METRIC:
+        monitor(-avg_accuracy, model)
 
     for epoch in range(0, epochs):
         # Do train step
@@ -740,7 +893,11 @@ def train_paired_classifier(model: PairedProtMotionNet,
             writer.add_scalar('avg_f1', avg_f1, epoch + 1)
 
         # Check for early-stopping stuff
-        monitor(val_loss, model)
+        if monitor_metric == VAL_LOSS_METRIC:
+            monitor(val_loss, model)
+        elif monitor_metric == ACCURACY_METRIC:
+            monitor(-avg_accuracy, model)
+
         if monitor.early_stop:
             if logger is None:
                 print(f"Epoch {epoch}: early stopping, restoring model checkpoint {checkpoint_path}...")

@@ -7,7 +7,9 @@ from torch.optim.lr_scheduler import LambdaLR
 from log.logger import Logger
 from torch_geometric.loader import ImbalancedSampler, DynamicBatchSampler
 from models.classification.classifiers import MulticlassClassificationLoss
-from models.classification.protmotionnet import PairedProtMotionNet, train_paired_classifier
+from models.classification.diffpool import DiffPool, DiffPoolMulticlassClassificationLoss
+from models.classification.protmotionnet import PairedProtMotionNet, train_paired_classifier, \
+    DiffPoolPairedProtMotionNet
 from models.pretraining.encoders import RevGCNEncoder, RevGATConvEncoder, RevSAGEConvEncoder, ResGCN2ConvEncoderV2
 from models.classification.ugformer import GCN, GAT, SAGE
 from preprocessing.constants import PSCDB_CLEANED_TRAIN, PSCDB_CLEANED_VAL, DATA_PATH, \
@@ -23,18 +25,18 @@ BATCH_SIZE: final = 10
 EPOCHS: final = 1000
 WARM_UP_EPOCHS: final = 80
 WEIGHT_DECAY: final = 0
-OPTIMIZER: final = "adamw"
+OPTIMIZER: final = "adam"
 EARLY_STOPPING_PATIENCE: final = 35
-EXPERIMENT_NAME: final = 'paired_protmotionnet_test0'
+EXPERIMENT_NAME: final = 'paired_protmotionnet_test2'
 EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "classification", "paired_protmotionnet")
 RESTORE_CHECKPOINT: final = True
 USE_CLASS_WEIGHTS: final = True
 USE_UNBALANCED_SAMPLER: final = False
 USE_DYNAMIC_BATCH: final = True
 DYNAMIC_BATCH_SIZE: final = 25000
-LABEL_SMOOTHING: final = 0.0
+LABEL_SMOOTHING: final = 0.1
 IN_CHANNELS: final = 10
-CONF_COUNT_START: final = 60
+CONF_COUNT_START: final = 0
 
 
 def main():
@@ -76,13 +78,13 @@ def main():
     conf_count = 0
 
     grid_values = {
-        'dropout': [0.1],
-        "model_name": [GAT],  # had GCN, GAT, SAGE
-        'embedding_dim': [32, 64, 128, 256],
-        'n_heads_gat': [16],
-        "dense_num": [2, 3],
-        "n_layers": [1, 5, 20, 50, 100],
-        "learning_rate": [0.0001, 0.0005, 0.00001]
+        'dropout': [0.0, 0.1],
+        "model_name": ["diff_pool"],  # had GCN, GAT, SAGE, "diff_pool"
+        'embedding_dim': [50, 100],  # [32, 64, 128, 256]
+        'n_heads_gat': [8],  # [8]
+        "dense_num": [1, 2, 3],  # [2, 3]
+        "n_layers": [3, 5, 6],  # [1, 5, 20, 50, 100]
+        "learning_rate": [0.00001, 0.000001]  # [0.0001, 0.00001, 0.000001]
     }
 
     for m in grid_values['model_name']:
@@ -92,10 +94,10 @@ def main():
                     for d in grid_values['dropout']:
                         for lr in grid_values['learning_rate']:
                             for nh in grid_values['n_heads_gat'] if m == GAT else [1]:
-                                d = random.choice([d, d, d, 0.2, 0.2])
+                                d = random.choice([d, d, d, 0.0, 0.0])
                                 if nl == 50:
                                     nl = random.choice([nl, 80])
-                                nh = random.choice([nh, 32])
+                                nh = random.choice([nh, 16])
                                 config = {
                                     'dropout': d,
                                     "model_name": m,
@@ -144,16 +146,41 @@ def main():
                                             improved=random.choice([True, False]),
                                             num_groups=2
                                         )
-                                    model = PairedProtMotionNet(
-                                        encoder=encoder,
-                                        encoder_out_channels=emb,
-                                        dense_units=[emb, n_classes] if dn == 2 else [emb, int(emb/2), n_classes],
-                                        dense_activations=["gelu", "linear"] if dn == 2 else ["gelu", "gelu", "linear"],
-                                        dim_features=in_channels,
-                                        dropout=d,
-                                        readout=random.choice(['add_pool']),
-                                        num_heads=4
-                                    )
+
+                                    if m == "diff_pool":
+                                        dense_units = None
+                                        dense_activations = None
+                                        if dn == 1:
+                                            dense_units = [n_classes]
+                                            dense_activations = ["linear"]
+                                        elif dn == 2:
+                                            dense_units = [emb, n_classes]
+                                            dense_activations = ["gelu", "linear"]
+                                        elif dn == 3:
+                                            dense_units = [emb, int(emb/2), n_classes]
+                                            dense_activations = ["gelu", "gelu", "linear"]
+                                        model = DiffPoolPairedProtMotionNet(
+                                            diff_pool_config={'num_layers': nl, 'dim_embedding': 256,
+                                                              'gnn_dim_hidden': 128, 'dim_embedding_MLP': emb,
+                                                              'max_num_nodes': 3787},
+                                            encoder_out_channels=emb,
+                                            dense_units=dense_units,
+                                            dense_activations=dense_activations,
+                                            dim_features=in_channels,
+                                            dropout=d
+                                        )
+                                    else:
+                                        model = PairedProtMotionNet(
+                                            encoder=encoder,
+                                            encoder_out_channels=emb,
+                                            dense_units=[emb, n_classes] if dn == 2 else [emb, int(emb/2), n_classes],
+                                            dense_activations=["gelu", "linear"] if dn == 2 else ["gelu", "gelu",
+                                                                                                  "linear"],
+                                            dim_features=in_channels,
+                                            dropout=d,
+                                            readout=random.choice(['add_pool']),
+                                            num_heads=4
+                                        )
 
                                     l2 = WEIGHT_DECAY
                                     scheduler = None
@@ -207,11 +234,16 @@ def main():
                                             torch.device("cuda") if torch.cuda.is_available() else
                                             torch.device("cpu")
                                         )
-                                    logger.log(f"Launching training for experiment UGFormerV2 n{conf_count} "
+                                    config = model.serialize_constructor_params()
+                                    logger.log(f"Launching training for experiment PairedProtMotionNet n{conf_count} "
                                                f"with config \n {config} with learning rate "
                                                f"{lr}, \n stored in "
                                                f"{full_experiment_path}...")
-
+                                    loss_fn = MulticlassClassificationLoss(weights=class_weights,
+                                                                           label_smoothing=LABEL_SMOOTHING)
+                                    if m == "diff_pool":
+                                        loss_fn = DiffPoolMulticlassClassificationLoss(weights=class_weights,
+                                                                                       label_smoothing=LABEL_SMOOTHING)
                                     model, metrics = train_paired_classifier(
                                         model,
                                         train_data=dl_train,
@@ -221,10 +253,10 @@ def main():
                                         experiment_path=EXPERIMENT_PATH,
                                         experiment_name=os.path.join(EXPERIMENT_NAME, f"n_{conf_count}"),
                                         early_stopping_patience=EARLY_STOPPING_PATIENCE,
-                                        criterion=MulticlassClassificationLoss(weights=class_weights,
-                                                                               label_smoothing=LABEL_SMOOTHING),
+                                        criterion=loss_fn,
                                         logger=logger,
-                                        scheduler=scheduler
+                                        scheduler=scheduler,
+                                        monitor_metric="acc"
                                     )
 
                                     if best_model_acc < metrics['accuracy']:

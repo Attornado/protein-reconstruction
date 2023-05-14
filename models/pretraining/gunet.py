@@ -241,7 +241,7 @@ class HierarchicalTopKRevEncoder(SerializableModule):
     def serialize_constructor_params(self, *args, **kwargs) -> dict:
         param_dict = {
             "in_channels": self.in_channels,
-            "hidden_channels": self.in_channels,
+            "hidden_channels": self.hidden_channels,
             "out_channels": self.out_channels,
             "num_convs": self.num_convs,
             "dropout": self.dropout,
@@ -261,7 +261,7 @@ class GraphRevUNet(SerializableModule):
                  dropout: float = 0.0,
                  pool_ratio: float = 0.5,
                  model_type: str = RevGCNEncoder.MODEL_TYPE,
-                 **encoder_parameters):
+                 **block_parameters):
         super().__init__()
         self._encoder = HierarchicalTopKRevEncoder(in_channels=in_channels,
                                                    hidden_channels=hidden_channels,
@@ -270,7 +270,7 @@ class GraphRevUNet(SerializableModule):
                                                    dropout=dropout,
                                                    pool_ratio=pool_ratio,
                                                    model_type=model_type,
-                                                   **encoder_parameters)
+                                                   **block_parameters)
 
         # Create decoder convs
         self._up_convs = torch.nn.ModuleList()
@@ -283,14 +283,14 @@ class GraphRevUNet(SerializableModule):
                                                    out_channels=output_channels,
                                                    num_convs=n,
                                                    dropout=dropout,
-                                                   **encoder_parameters)
+                                                   **block_parameters)
             elif model_type == RevGCNEncoder.MODEL_TYPE:
                 decoder_block = RevGCNEncoder(in_channels=hidden_channels,
                                               hidden_channels=hidden_channels,
                                               out_channels=output_channels,
                                               num_convs=n,
                                               dropout=dropout,
-                                              **encoder_parameters)
+                                              **block_parameters)
             elif model_type == RevGATConvEncoder.MODEL_TYPE:
                 decoder_block = RevGATConvEncoder(in_channels=hidden_channels,
                                                   hidden_channels=hidden_channels,
@@ -298,7 +298,7 @@ class GraphRevUNet(SerializableModule):
                                                   num_convs=n,
                                                   dropout=dropout,
                                                   edge_dim=1,
-                                                  **encoder_parameters)
+                                                  **block_parameters)
             self._up_convs.append(decoder_block)
 
         self.reset_parameters()
