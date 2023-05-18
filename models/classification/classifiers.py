@@ -74,6 +74,18 @@ class MulticlassClassificationLoss(ClassificationLoss):
 
 class GraphClassifier(SerializableModule):
     def __init__(self, dim_features: int, dim_target: int, config: dict):
+        """
+        Generic graph classifier abstract class.
+
+        :param dim_features: An integer representing the dimensionality of the input features for the graph classifier.
+        :type dim_features: int
+        :param dim_target: The dimensionality of the target variable, which is the variable we want to predict in the
+            classification task.
+        :type dim_target: int
+        :param config: The `config` parameter is a dictionary that contains configuration settings for the
+            `GraphClassifier` model.
+        :type config: dict
+        """
         super(GraphClassifier, self).__init__()
         self.__in_channels: int = dim_features
         self.__dim_target: int = dim_target
@@ -113,7 +125,8 @@ class GraphClassifier(SerializableModule):
              top_k: Optional[int] = None,
              *args, **kwargs) -> (float, Optional[float], float, float, float, float):
         """
-        This function takes in a graph, and returns the loss, accuracy, top-k accuracy, precision, recall, and F1-score.
+        Takes in a batch graph (or the predictions) and the corresponding labels, and returns the loss, accuracy, top-k
+        accuracy, precision, recall, and F1-score.
 
         :param x: torch.Tensor = The node features
         :type x: torch.Tensor
@@ -192,7 +205,6 @@ class GraphClassifier(SerializableModule):
 def train_step_classifier(model: GraphClassifier, train_data: DataLoader, optimizer, device: torch.device,
                           criterion: ClassificationLoss = MulticlassClassificationLoss(),
                           logger: Optional[Logger] = None):
-    # TODO: test this
     # Put the model in training mode
     model.train()
 
