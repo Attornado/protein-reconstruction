@@ -1,4 +1,4 @@
-from typing import List, final, Union, Any, Optional
+from typing import List, final, Optional
 import torch
 from torch.nn.functional import softmax
 from models.classification.classifiers import GraphClassifier
@@ -128,5 +128,3 @@ class EnsembleGraphClassifier(torch.nn.Module):
             preds_ensemble = torch.tensor(true_preds)
 
         return preds_ensemble
-
-
