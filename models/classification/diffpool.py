@@ -22,10 +22,9 @@ from torch import nn
 from torch.nn import functional as F
 from torch_geometric.nn.dense import DenseSAGEConv, dense_diff_pool
 from torch_geometric.utils import to_dense_batch, to_dense_adj
-from torch_geometric.transforms import ToDense
+# from torch_geometric.transforms import ToDense
 from torchmetrics.functional import accuracy, precision, recall, f1_score
 from models.classification.classifiers import GraphClassifier, MulticlassClassificationLoss, ClassificationLoss
-from models.layers import SerializableModule
 
 
 NUM_SAGE_LAYERS = 3
@@ -186,7 +185,7 @@ class DiffPool(GraphClassifier):
 
         return x, l_total, e_total
 
-    def forward(self, x, edge_index, batch):
+    def forward(self, x, edge_index, batch, apply_first_linear: bool = True, apply_second_linear: bool = True):
 
         '''x, mask = to_dense_batch(x, batch=batch)
         adj = to_dense_adj(edge_index, batch=batch)
@@ -211,8 +210,11 @@ class DiffPool(GraphClassifier):
 
         x = torch.cat(x_all, dim=1)  # shape (batch, feature_size x diffpool layers)'''
         x, l_total, e_total = self.get_embeddings(x=x, edge_index=edge_index, batch=batch)
-        x = F.relu(self.lin1(x))
-        x = self.lin2(x)
+
+        if apply_first_linear or apply_second_linear:
+            x = F.relu(self.lin1(x))
+        if apply_second_linear:
+            x = self.lin2(x)
         return x, l_total, e_total
 
     def test(self,
@@ -245,7 +247,8 @@ class DiffPool(GraphClassifier):
         n_classes = self.dim_target
 
         # Get predictions
-        y_hat = self(x, edge_index, batch_index, *args, **kwargs)
+        if y_hat is None:
+            y_hat = self(x, edge_index, batch_index, *args, **kwargs)
 
         # Compute loss
         loss = self.loss(y_hat=y_hat, y=y, criterion=criterion)

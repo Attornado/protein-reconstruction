@@ -1,10 +1,14 @@
-from typing import final, Iterable, Optional
+from typing import final, Iterable, Optional, Literal, Callable
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
 
 
-DEFAULT_METRICS: final = frozenset(["train_loss", "val_loss"])
+ACCURACY_METRIC: final = "acc"
+VAL_LOSS_METRIC: final = "val_loss"
+TRAIN_LOSS_METRIC: final = "train_loss"
+F1_METRIC: final = "f1"
+DEFAULT_METRICS: final = frozenset([TRAIN_LOSS_METRIC, VAL_LOSS_METRIC])
 METRIC_TRACER_DEFAULT: final = "metric_tracer"
 FIGURE_SIZE_DEFAULT: final = (10, 8)
 EARLY_STOP_PATIENCE: final = 10
@@ -15,54 +19,85 @@ EARLY_STOP_PATIENCE: final = 10
 class EarlyStopping(object):
     """Early stops the training if validation loss doesn't improve after a given patience."""
 
-    def __init__(self, patience=EARLY_STOP_PATIENCE, verbose=False, delta=0, path='checkpoint.pt', trace_func=print):
+    def __init__(self,
+                 patience: int = EARLY_STOP_PATIENCE,
+                 verbose: bool = False,
+                 delta: float = 0,
+                 path: str = 'checkpoint.pt',
+                 trace_func: Callable = print,
+                 monitored_metric_name: str = VAL_LOSS_METRIC):
         """
         Args:
-            patience (int): How long to wait after last time validation loss improved.
+            patience (int): How long to wait after last time validation loss/metric improved.
                             Default: 7
-            verbose (bool): If True, prints a message for each validation loss improvement. 
+            verbose (bool): If True, prints a message for each validation loss/metric  improvement.
                             Default: False
             delta (float): Minimum change in the monitored quantity to qualify as an improvement.
                             Default: 0
             path (str): Path for the checkpoint to be saved to.
                             Default: 'checkpoint.pt'
             trace_func (function): trace print function.
-                            Default: print            
+                            Default: print
+            monitored_metric_name (str): name of the monitored metric.
+                            Default: VAL_LOSS_METRIC
         """
-        self.patience = patience
-        self.verbose = verbose
-        self.counter = 0
-        self.best_score = None
+        self.__patience: int = patience
+        self.__verbose: bool = verbose
+        self.__counter: int = 0
+        self.__best_score = None
         self.early_stop = False
-        self.val_loss_min = np.Inf
+        self.monitored_metric_best = np.Inf
         self.delta = delta
         self.path = path
         self.trace_func = trace_func
+        self.monitored_metric_name = monitored_metric_name
 
-    def __call__(self, val_loss, model):
+    @property
+    def patience(self) -> int:
+        return self.__patience
 
-        score = -val_loss
+    @patience.setter
+    def patience(self, patience: int):
+        self.__patience = patience
 
-        if self.best_score is None:
-            self.best_score = score
-            self.save_checkpoint(val_loss, model)
-        elif score < self.best_score + self.delta:
-            self.counter += 1
+    @property
+    def verbose(self) -> bool:
+        return self.__verbose
+
+    @verbose.setter
+    def verbose(self, verbose: bool):
+        self.__verbose = verbose
+
+    @property
+    def counter(self) -> int:
+        return self.__counter
+
+    def __call__(self, monitored_metric, model):
+
+        score = -monitored_metric
+
+        if self.__best_score is None:
+            self.__best_score = score
+            self.save_checkpoint(monitored_metric, model)
+        elif score < self.__best_score + self.delta:
+            self.__counter += 1
             self.trace_func(f'EarlyStopping counter: {self.counter} out of {self.patience}')
             if self.counter >= self.patience:
                 self.early_stop = True
         else:
-            self.best_score = score
-            self.save_checkpoint(val_loss, model)
-            self.counter = 0
+            self.__best_score = score
+            self.save_checkpoint(monitored_metric, model)
+            self.__counter = 0
 
-    def save_checkpoint(self, val_loss, model):
-        """Saves model when validation loss decrease."""
+    def save_checkpoint(self, monitored_metric, model):
+        """Saves model when monitored metric improves."""
         if self.verbose:
             self.trace_func(
-                f'Validation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f}).  Saving model ...')
+                f'{self.monitored_metric_name} improved ({self.monitored_metric_best:.6f} --> '
+                f'{monitored_metric:.6f}).  Saving model ...'
+            )
         torch.save(model.state_dict(), self.path)
-        self.val_loss_min = val_loss
+        self.monitored_metric_best = monitored_metric
 
 
 class MetricsHistoryTracer(object):
