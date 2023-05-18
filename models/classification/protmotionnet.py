@@ -9,7 +9,7 @@ from torch.utils.tensorboard import SummaryWriter
 from torch_geometric.data import Data
 from torch.nn import LayerNorm
 from torch_geometric.nn.aggr import LSTMAggregation, SoftmaxAggregation, MaxAggregation, MeanAggregation, SumAggregation
-from torch_geometric.nn.dense import Linear, dense_diff_pool  # this has to be in the "future work"
+from torch_geometric.nn.dense import Linear
 # from torch_geometric.utils import to_dense_batch
 from log.logger import Logger
 from models.batch_utils import generate_batch_cross_attention_mask_v2

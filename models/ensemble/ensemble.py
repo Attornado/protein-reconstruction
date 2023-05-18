@@ -17,6 +17,27 @@ class EnsembleGraphClassifier(torch.nn.Module):
                  ensemble_mode: str = SOFTMAX_MEAN,
                  weights: Optional[List[float]] = None,
                  device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")):
+        """
+        Ensemble graph classifier supporting multiple ensemble modes.
+
+        :param models: A list of GraphClassifier models that will be used in the ensemble.
+        :type models: List[GraphClassifier]
+        :param dim_features: The dimensionality of the input features for the models in the ensemble.
+        :type dim_features: int
+        :param dim_target: The dimensionality of the target variable, i.e., the number of classes in the classification
+            problem.
+        :type dim_target: int
+        :param ensemble_mode: ensemble_mode is a string parameter that specifies the mode of ensemble to be used. It
+            must be one of the values in the _ENSEMBLE_MODES list. The default value is SOFTMAX_MEAN.
+        :type ensemble_mode: str
+        :param weights: Optional parameter that takes a list of floats representing the weights to be assigned to each
+            model in the ensemble. If not provided, each model is assigned a weight of 1.0. The length of the weights
+            list must be equal to the number of models in the ensemble.
+        :type weights: Optional[List[float]]
+        :param device: The device parameter is a torch.device object that specifies whether to use the CPU or GPU for
+            computations. If a GPU is available, it will be used by default.
+        :type device: torch.device
+        """
         super().__init__()
         if ensemble_mode not in _ENSEMBLE_MODES:
             raise ValueError(f"ensemble_mode must be in {_ENSEMBLE_MODES}. {ensemble_mode} given.")
@@ -59,6 +80,11 @@ class EnsembleGraphClassifier(torch.nn.Module):
         return self.__device
 
     def forward(self, *args, **kwargs) -> List[torch.Tensor]:
+        """
+        Gets the outputs of each model in the ensemble.
+
+        :return: a list of torch.Tensor representing the outputs of each model in the ensemble.
+        """
 
         outputs = []
         # For each model in the ensemble
