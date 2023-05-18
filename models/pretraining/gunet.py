@@ -1,7 +1,10 @@
-from typing import Optional, Union, Tuple, final
+from functools import partial
+from typing import Optional, Union, Tuple, final, Callable, List
 import torch
+import torch.nn.functional as F
+from torch_geometric.nn.models import GraphUNet
 from torch_geometric.nn.pool import TopKPooling
-from torch_geometric.typing import PairTensor
+from torch_geometric.typing import PairTensor, OptTensor
 from torch_geometric.utils import to_torch_coo_tensor, remove_self_loops, add_self_loops
 from models.layers import SerializableModule
 from models.pretraining.encoders import RevSAGEConvEncoder, RevGATConvEncoder, ResGCN2ConvEncoderV2, RevGCNEncoder
@@ -61,6 +64,7 @@ class HierarchicalTopKRevEncoder(SerializableModule):
                  dropout: float = 0.0,
                  pool_ratio: float = 0.5,
                  model_type: str = RevGCNEncoder.MODEL_TYPE,
+                 num_groups: int = 2,
                  **block_parameters):
         super().__init__()
 
@@ -71,14 +75,15 @@ class HierarchicalTopKRevEncoder(SerializableModule):
         if model_type not in self.MODEL_TYPES:
             raise ValueError(f"model_type must be one of {self.MODEL_TYPES}. {model_type} given.")
 
-        self.__in_channels = in_channels
-        self.__hidden_channels = hidden_channels
-        self.__out_channels = out_channels
-        self.__num_convs = num_convs
-        self.__dropout = dropout
-        self.__pool_ratio = pool_ratio
-        self.__model_type = model_type
-        self.__block_params = block_parameters
+        self.__in_channels: int = in_channels
+        self.__hidden_channels: int = hidden_channels
+        self.__out_channels: int = out_channels
+        self.__num_convs: list[int] = num_convs
+        self.__dropout: float = dropout
+        self.__pool_ratio: float = pool_ratio
+        self.__model_type: str = model_type
+        self.__block_params: dict = block_parameters
+        self.__num_groups: int = num_groups
         self._encoder_convs = torch.nn.ModuleList()
         self._pools = torch.nn.ModuleList()
 
@@ -93,6 +98,7 @@ class HierarchicalTopKRevEncoder(SerializableModule):
                                                    out_channels=output_channels,
                                                    num_convs=n,
                                                    dropout=dropout,
+                                                   num_groups=num_groups,
                                                    **block_parameters)
             elif model_type == RevGCNEncoder.MODEL_TYPE:
                 encoder_block = RevGCNEncoder(in_channels=input_channels,
@@ -100,6 +106,7 @@ class HierarchicalTopKRevEncoder(SerializableModule):
                                               out_channels=output_channels,
                                               num_convs=n,
                                               dropout=dropout,
+                                              num_groups=num_groups,
                                               **block_parameters)
             elif model_type == RevGATConvEncoder.MODEL_TYPE:
                 encoder_block = RevGATConvEncoder(in_channels=input_channels,
@@ -108,6 +115,7 @@ class HierarchicalTopKRevEncoder(SerializableModule):
                                                   num_convs=n,
                                                   dropout=dropout,
                                                   edge_dim=1,
+                                                  num_groups=num_groups,
                                                   **block_parameters)
             if i != 0:
                 top_k_pooling = TopKPooling(in_channels=hidden_channels, ratio=pool_ratio)
@@ -147,6 +155,10 @@ class HierarchicalTopKRevEncoder(SerializableModule):
     @property
     def model_type(self) -> str:
         return self.__model_type
+
+    @property
+    def num_groups(self) -> int:
+        return self.__num_groups
 
     @property
     def block_params(self) -> dict:
@@ -247,6 +259,7 @@ class HierarchicalTopKRevEncoder(SerializableModule):
             "dropout": self.dropout,
             "pool_ratio": self.pool_ratio,
             "model_type": self.model_type,
+            "num_groups": self.num_groups
         }
         param_dict.update(**self.block_params)
         return param_dict
@@ -261,6 +274,7 @@ class GraphRevUNet(SerializableModule):
                  dropout: float = 0.0,
                  pool_ratio: float = 0.5,
                  model_type: str = RevGCNEncoder.MODEL_TYPE,
+                 num_groups: int = 2,
                  **block_parameters):
         super().__init__()
         self._encoder = HierarchicalTopKRevEncoder(in_channels=in_channels,
@@ -270,6 +284,7 @@ class GraphRevUNet(SerializableModule):
                                                    dropout=dropout,
                                                    pool_ratio=pool_ratio,
                                                    model_type=model_type,
+                                                   num_groups=num_groups,
                                                    **block_parameters)
 
         # Create decoder convs
@@ -283,6 +298,7 @@ class GraphRevUNet(SerializableModule):
                                                    out_channels=output_channels,
                                                    num_convs=n,
                                                    dropout=dropout,
+                                                   num_groups=num_groups,
                                                    **block_parameters)
             elif model_type == RevGCNEncoder.MODEL_TYPE:
                 decoder_block = RevGCNEncoder(in_channels=hidden_channels,
@@ -290,6 +306,7 @@ class GraphRevUNet(SerializableModule):
                                               out_channels=output_channels,
                                               num_convs=n,
                                               dropout=dropout,
+                                              num_groups=num_groups,
                                               **block_parameters)
             elif model_type == RevGATConvEncoder.MODEL_TYPE:
                 decoder_block = RevGATConvEncoder(in_channels=hidden_channels,
@@ -298,6 +315,7 @@ class GraphRevUNet(SerializableModule):
                                                   num_convs=n,
                                                   dropout=dropout,
                                                   edge_dim=1,
+                                                  num_groups=num_groups,
                                                   **block_parameters)
             self._up_convs.append(decoder_block)
 
@@ -334,6 +352,10 @@ class GraphRevUNet(SerializableModule):
     @property
     def model_type(self) -> str:
         return self._encoder.model_type
+
+    @property
+    def num_groups(self) -> int:
+        return self._encoder.num_groups
 
     @property
     def block_params(self) -> dict:
@@ -399,3 +421,137 @@ class GraphRevUNet(SerializableModule):
 
     def serialize_constructor_params(self, *args, **kwargs) -> dict:
         return self._encoder.serialize_constructor_params()
+
+
+class GraphUNetV2(SerializableModule):
+
+    _ACTIVATIONS: final = {
+        "linear": torch.nn.Identity(),
+        "relu": F.relu,
+        "leaky_relu": F.leaky_relu,
+        "rrelu": F.rrelu,
+        "relu6": F.relu6,
+        "gelu": partial(F.gelu, approximate='none'),
+        "elu": F.elu,
+        "celu": F.celu,
+        "glu": F.glu,
+        "selu": F.selu,
+        "prelu": F.prelu,
+        "silu": F.silu,
+        "hardswish": F.hardswish,
+        "tanh": F.tanh,
+        "sigmoid": torch.sigmoid
+    }
+    ACTIVATIONS: final = frozenset(_ACTIVATIONS.keys())
+
+    def __init__(self,
+                 in_channels: int,
+                 hidden_channels: int,
+                 out_channels: int,
+                 depth: int,
+                 pool_ratios: Union[float, List[float]] = 0.5,
+                 sum_res: bool = True,
+                 act: str = "relu"):
+        r"""The Graph U-Net model from the `"Graph U-Nets"
+        <https://arxiv.org/abs/1905.05178>`_ paper which implements a U-Net like
+        architecture with graph pooling and unpooling operations.
+
+        Args:
+            in_channels (int): Size of each input sample.
+            hidden_channels (int): Size of each hidden sample.
+            out_channels (int): Size of each output sample.
+            depth (int): The depth of the U-Net architecture.
+            pool_ratios (float or [float], optional): Graph pooling ratio for each
+                depth. (default: :obj:`0.5`)
+            sum_res (bool, optional): If set to :obj:`False`, will use
+                concatenation for integration of skip connections instead
+                summation. (default: :obj:`True`)
+            act (torch.nn.functional, optional): The nonlinearity to use.
+                (default: :obj:`torch.nn.functional.relu`)
+        """
+        if act not in self.ACTIVATIONS:
+            raise ValueError(f"act must be in {self.ACTIVATIONS}, {act} given.")
+        super().__init__()
+
+        # Store attributes
+        self.__in_channels: int = in_channels
+        self.__hidden_channels: int = hidden_channels
+        self.__out_channels: int = out_channels
+        self.__depth: int = depth
+        self.__pool_ratios: Union[float, List[float]] = pool_ratios
+        self.__sum_res: bool = sum_res
+        self.__act: str = act
+
+        # Initialize GraphUNet
+        activation_fn = self._ACTIVATIONS[act]
+        self._gunet = GraphUNet(in_channels=in_channels,
+                                hidden_channels=hidden_channels,
+                                out_channels=out_channels,
+                                depth=depth,
+                                pool_ratios=pool_ratios,
+                                sum_res=sum_res,
+                                act=activation_fn)
+
+    @property
+    def in_channels(self) -> int:
+        return self.__in_channels
+
+    @property
+    def hidden_channels(self) -> int:
+        return self.__hidden_channels
+
+    @property
+    def out_channels(self) -> int:
+        return self.__out_channels
+
+    @property
+    def depth(self) -> int:
+        return self.__depth
+
+    @property
+    def pool_ratios(self) -> Union[float, List[float]]:
+        return self.__pool_ratios
+
+    @property
+    def sum_res(self) -> bool:
+        return self.__sum_res
+
+    @property
+    def act(self) -> str:
+        return self.__act
+
+    @property
+    def activation(self) -> Callable:
+        return self._ACTIVATIONS[self.act]
+
+    def serialize_constructor_params(self, *args, **kwargs) -> dict:
+        return {
+            "in_channels": self.in_channels,
+            "hidden_channels": self.hidden_channels,
+            "out_channels": self.out_channels,
+            "depth": self.depth,
+            "pool_ratios": self.pool_ratios,
+            "sum_res": self.sum_res,
+            "act": self.act
+        }
+
+    def forward(self,
+                x: torch.Tensor,
+                edge_index: torch.Tensor,
+                batch: OptTensor = None) -> torch.Tensor:
+        return self._gunet(x=x, edge_index=edge_index, batch=batch)
+
+    def augment_adj(self,
+                    edge_index: torch.Tensor,
+                    edge_weight: torch.Tensor,
+                    num_nodes: int) -> PairTensor:
+        return self._gunet.augment_adj(edge_index=edge_index, edge_weight=edge_weight, num_nodes=num_nodes)
+
+    def reset_parameters(self):
+        self._gunet.reset_parameters()
+
+    def __repr__(self) -> str:
+        return f"{self._gunet.__repr__()[:-1]}, act={self.act})"
+
+
+

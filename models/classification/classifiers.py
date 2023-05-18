@@ -153,10 +153,15 @@ class GraphClassifier(SerializableModule):
 
         return float(loss), float(acc), top_k_acc, prec, rec, f1
 
-    def loss(self, y, x: Optional[torch.Tensor] = None, edge_index: Optional[torch.Tensor] = None,
-             batch_index: Optional[torch.Tensor] = None, y_hat: Optional[torch.Tensor] = None,
+    def loss(self,
+             y,
+             x: Optional[torch.Tensor] = None,
+             edge_index: Optional[torch.Tensor] = None,
+             batch_index: Optional[torch.Tensor] = None,
+             y_hat: Optional[torch.Tensor] = None,
              criterion: ClassificationLoss = MulticlassClassificationLoss(),
-             additional_terms: list[torch.Tensor] = None, *args, **kwargs) -> torch.Tensor:
+             additional_terms: list[torch.Tensor] = None,
+             *args, **kwargs) -> torch.Tensor:
 
         # If predictions are not given, compute them using the model
         if y_hat is None:

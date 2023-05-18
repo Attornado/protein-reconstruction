@@ -7,11 +7,13 @@ import torch.nn.functional as F
 from torch.nn import MultiheadAttention, TransformerEncoderLayer, TransformerEncoder
 from torch.utils.tensorboard import SummaryWriter
 from torch_geometric.data import Data
+from torch.nn import LayerNorm
 from torch_geometric.nn.aggr import LSTMAggregation, SoftmaxAggregation, MaxAggregation, MeanAggregation, SumAggregation
 from torch_geometric.nn.dense import Linear, dense_diff_pool  # this has to be in the "future work"
 # from torch_geometric.utils import to_dense_batch
 from log.logger import Logger
 from models.batch_utils import generate_batch_cross_attention_mask_v2
+from models.layers import PositionWiseFeedForward
 # from models.batch_utils import generate_batch_cross_attention_mask, from_dense_batch
 from models.classification.classifiers import GraphClassifier, MulticlassClassificationLoss, ClassificationLoss
 from models.classification.diffpool import DiffPool, DiffPoolMulticlassClassificationLoss
@@ -56,7 +58,8 @@ class ProtMotionNet(GraphClassifier):
     ACTIVATIONS: final = frozenset(_ACTIVATIONS.keys())
 
     def __init__(self, encoder: SerializableModule, encoder_out_channels: int, dense_units: list[int],
-                 dense_activations: list[str], dim_features: int, dropout: float = 0.0, readout: str = 'mean_pool'):
+                 dense_activations: list[str], dim_features: int, dropout: float = 0.0, readout: str = 'mean_pool',
+                 forward_batch_index: bool = False):
 
         super(ProtMotionNet, self).__init__(dim_features=dim_features,
                                             dim_target=dense_units[-1],
@@ -70,7 +73,8 @@ class ProtMotionNet(GraphClassifier):
                              f" {len(dense_activations)} and {len(dense_units)} given")
 
         self._encoder = encoder
-        self.__encoder_out_channels = encoder_out_channels
+        self.__encoder_out_channels: int = encoder_out_channels
+        self.__forward_batch_index: bool = forward_batch_index
         self._readout_aggregation = self.__resolve_readout(readout, encoder_out_channels)
         # self.__dense_units = dense_units
         # self.__dense_activations = dense_activations
@@ -108,12 +112,16 @@ class ProtMotionNet(GraphClassifier):
 
     def forward(self, x, edge_index, batch_index: Tensor = None, *args, **kwargs):
 
-        # Extract features with encoder
-        x = self._encoder(x, edge_index, *args, **kwargs)
-
         # Apply readout aggregation, assuming batch is a single graph if batch_index is not given
         if batch_index is None:
             batch_index = torch.zeros(size=(x.shape[-2],)).type(torch.int64)
+
+        # Extract features with encoder
+        if self.forward_batch_index:
+            x = self._encoder(x, edge_index, batch_index, *args, **kwargs)
+        else:
+            x = self._encoder(x, edge_index, *args, **kwargs)
+
         x = self._readout_aggregation(x, index=batch_index)
 
         x = self._apply_dense_layers(x)
@@ -140,6 +148,10 @@ class ProtMotionNet(GraphClassifier):
     def encoder_out_channels(self) -> int:
         return self.__encoder_out_channels
 
+    @property
+    def forward_batch_index(self) -> bool:
+        return self.__forward_batch_index
+
     def serialize_constructor_params(self, *args, **kwargs) -> dict:
 
         # Serialize constructor parameters
@@ -148,7 +160,8 @@ class ProtMotionNet(GraphClassifier):
             "dense_units": self.dense_units,
             "dense_activations": self.dense_activations,
             "dropout": self.dropout,
-            "readout": self.readout
+            "readout": self.readout,
+            "forward_batch_index": self.forward_batch_index
         }
 
         # Serialize encoder
@@ -186,33 +199,58 @@ class ProtMotionNet(GraphClassifier):
 
 
 class PairedProtMotionNet(ProtMotionNet):
-    def __init__(self, encoder: SerializableModule, encoder_out_channels: int, dense_units: list[int],
-                 dense_activations: list[str], dim_features: int, num_heads: int = 8, kdim: Optional[int] = None,
-                 vdim: Optional[int] = None, dropout: float = 0.0, readout: str = 'mean_pool'):
+    def __init__(self,
+                 encoder: SerializableModule,
+                 encoder_out_channels: int,
+                 dense_units: list[int],
+                 dense_activations: list[str],
+                 dim_features: int,
+                 num_heads: Optional[int] = 4,
+                 kdim: Optional[int] = None,
+                 vdim: Optional[int] = None,
+                 dropout: float = 0.0,
+                 readout: str = 'mean_pool',
+                 forward_batch_index: bool = False,
+                 use_ff: bool = False):
         super(PairedProtMotionNet, self).__init__(encoder=encoder, encoder_out_channels=encoder_out_channels,
                                                   dense_units=dense_units, dense_activations=dense_activations,
-                                                  dim_features=dim_features, dropout=dropout, readout=readout)
-        self._multi_head_attention = MultiheadAttention(embed_dim=encoder_out_channels, num_heads=num_heads,
-                                                        dropout=dropout, kdim=kdim, vdim=vdim, batch_first=False)
+                                                  dim_features=dim_features, dropout=dropout, readout=readout,
+                                                  forward_batch_index=forward_batch_index)
+        if num_heads is not None:
+            self._multi_head_attention = MultiheadAttention(embed_dim=encoder_out_channels, num_heads=num_heads,
+                                                            dropout=dropout, kdim=kdim, vdim=vdim, batch_first=False)
+            self._layer_norm0 = LayerNorm(encoder_out_channels, elementwise_affine=True)
+
+            self._ff = None
+            if use_ff:
+                self._ff = PositionWiseFeedForward(encoder_out_channels, 4*encoder_out_channels, dropout=dropout,
+                                                   pre_norm=True)
         self.__vdim: Optional[int] = vdim
         self.__kdim: Optional[int] = kdim
-        self.__num_heads: int = num_heads
+        self.__num_heads: Optional[int] = num_heads
 
     @property
-    def vdim(self) -> int:
-        return self.__vdim if self.__vdim is not None else self.encoder_out_channels
+    def vdim(self) -> Optional[int]:
+        return self.__vdim
 
     @property
-    def kdim(self) -> int:
-        return self.__kdim if self.__kdim is not None else self.encoder_out_channels
+    def kdim(self) -> Optional[int]:
+        return self.__kdim
 
     @property
-    def num_heads(self) -> int:
+    def num_heads(self) -> Optional[int]:
         return self.__num_heads
+
+    @property
+    def use_ff(self) -> bool:
+        return self._ff is not None
 
     def serialize_constructor_params(self, *args, **kwargs) -> dict:
         constructor_params = super(PairedProtMotionNet, self).serialize_constructor_params(*args, **kwargs)
-        constructor_params.update({"num_heads": self.__num_heads, "vdim": self.__vdim, "kdim": self.__kdim})
+        constructor_params.update({"num_heads": self.__num_heads,
+                                   "vdim": self.__vdim,
+                                   "kdim": self.__kdim,
+                                   "use_ff": self._ff is not None})
         return constructor_params
 
     def _get_cross_embeddings(self,
@@ -262,8 +300,12 @@ class PairedProtMotionNet(ProtMotionNet):
             batch_index1 = torch.zeros(size=(x1.shape[-2],)).type(torch.int64)
 
         # Extract features with encoder
-        x = self._encoder(x, edge_index, *args, **kwargs)
-        x1 = self._encoder(x1, edge_index1, *args, **kwargs)
+        if self.forward_batch_index:
+            x = self._encoder(x, edge_index, batch_index, *args, **kwargs)
+            x1 = self._encoder(x1, edge_index1, batch_index1, *args, **kwargs)
+        else:
+            x = self._encoder(x, edge_index, *args, **kwargs)
+            x1 = self._encoder(x1, edge_index1, *args, **kwargs)
 
         '''
         # Convert to dense batch
@@ -284,22 +326,50 @@ class PairedProtMotionNet(ProtMotionNet):
         # from it, but invert True with False and False with True since True positions are not allowed to attend
         key_padding_mask = mask0 == False
         '''
-        # Create attention mask according to batch indexes, for the purpose of not allowing nodes representing residues
-        # in different proteins (graphs) to attend to each other
-        attn_mask = generate_batch_cross_attention_mask_v2(batch_index_query=batch_index1, batch_index_key=batch_index)
 
-        # Apply cross multi-head attention
-        # TODO: check the longer between x and x1, so that the longer is used as query (using x1 should be fine however)
-        x, _ = self._multi_head_attention(query=x1, key=x, value=x, key_padding_mask=None, need_weights=False,
-                                          attn_mask=attn_mask)
+        # Apply multi-head cross attention to combine predictions for each encoder if required
+        attn_mask = None
+        if self.num_heads is not None:
+            # Create attention mask according to batch indexes, for the purpose of not allowing nodes representing
+            # residues in different proteins (graphs) to attend to each other
+            attn_mask = generate_batch_cross_attention_mask_v2(batch_index_query=batch_index1,
+                                                               batch_index_key=batch_index)
 
-        # Add shortcut-connection with concat/add with the query
-        x = x + x1
+            # Apply cross multi-head attention, applying pre-layer norm
+            x1_bak = x1
+            x = self._layer_norm0(x)
+            x1 = self._layer_norm0(x1)
 
-        # Free memory
-        del x1  # no need to further memorize this
-        del _
-        torch.cuda.empty_cache()
+            # TODO: check the longer between x and x1, so that the longer is used as query (using x1 should be fine
+            #  however)
+            x, _ = self._multi_head_attention(query=x1, key=x, value=x, key_padding_mask=None, need_weights=False,
+                                              attn_mask=attn_mask)
+
+            # Free memory
+            del x1  # no need to further memorize this
+            del _
+
+            # Add shortcut-connection with concat/add with the query
+            x = x + x1_bak
+
+            # Free memory
+            del x1_bak  # no need to further memorize this
+            torch.cuda.empty_cache()
+
+            # Apply point-wise feed-forward if required
+            if self._ff is not None:
+                # Apply point-wise feed-forward
+                self._ff.forward(x=x, add_norm=True)
+
+        # Otherwise, apply the readout aggregation and concat embeddings
+        else:
+            x = self._readout_aggregation(x, index=batch_index)
+            x1 = self._readout_aggregation(x1, index=batch_index1)
+            x = torch.cat([x, x1], dim=1)
+
+            # Free memory
+            del x1
+            torch.cuda.empty_cache()
 
         return x, attn_mask
 
@@ -353,8 +423,9 @@ class PairedProtMotionNet(ProtMotionNet):
         del attn_mask
         torch.cuda.empty_cache()
 
-        # Apply readout aggregation
-        x = self._readout_aggregation(x, index=batch_index1)
+        if self.num_heads is not None:
+            # Apply readout aggregation
+            x = self._readout_aggregation(x, index=batch_index1)
 
         # Apply dense layers for classification
         x = self._apply_dense_layers(x)
@@ -385,13 +456,13 @@ class TransformerPairedProtMotionNet(PairedProtMotionNet):
     def __init__(self, encoder: SerializableModule, encoder_out_channels: int, dense_units: list[int],
                  dense_activations: list[str], dim_features: int, n_blocks: int, num_heads: int = 8,
                  kdim: Optional[int] = None, vdim: Optional[int] = None, dropout: float = 0.0,
-                 readout: str = 'mean_pool', d_ff: Optional[int] = None, ff_activation: str = "gelu",
-                 pre_norm: bool = True):
+                 readout: str = 'mean_pool', forward_batch_index: bool = False, d_ff: Optional[int] = None,
+                 ff_activation: str = "gelu", pre_norm: bool = True):
         super(TransformerPairedProtMotionNet, self).__init__(encoder=encoder, encoder_out_channels=encoder_out_channels,
                                                              dense_activations=dense_activations,
                                                              dim_features=dim_features, dense_units=dense_units,
                                                              num_heads=num_heads, kdim=kdim, vdim=vdim, dropout=dropout,
-                                                             readout=readout)
+                                                             readout=readout, forward_batch_index=forward_batch_index)
         transformer_block = TransformerEncoderLayer(
             d_model=encoder_out_channels,
             nhead=num_heads,
@@ -760,6 +831,7 @@ def train_paired_classifier(model: PairedProtMotionNet,
                             criterion: ClassificationLoss = MulticlassClassificationLoss(),
                             scheduler=None,
                             monitor_metric: str = VAL_LOSS_METRIC,
+                            monitor_metric2: str = None,
                             use_tensorboard_log: bool = False) -> (torch.nn.Module, dict):
     # TODO: test this
     # Move model to device
@@ -783,6 +855,16 @@ def train_paired_classifier(model: PairedProtMotionNet,
         path=checkpoint_path,
         trace_func=logger.log
     )
+
+    monitor2 = None
+    if monitor_metric2 is not None:
+        monitor2 = EarlyStopping(
+            patience=early_stopping_patience,
+            verbose=True,
+            delta=early_stopping_delta,
+            path=checkpoint_path,
+            trace_func=logger.log
+        )
 
     # Metric history trace object
     mht = MetricsHistoryTracer(
@@ -840,6 +922,17 @@ def train_paired_classifier(model: PairedProtMotionNet,
         monitor(val_loss, model)
     elif monitor_metric == ACCURACY_METRIC:
         monitor(-avg_accuracy, model)
+    elif monitor_metric == F1_METRIC:
+        monitor(-avg_f1, model)
+
+    if monitor2 is not None:
+        monitor_metric2 = monitor_metric2.lower()
+        if monitor_metric2 == VAL_LOSS_METRIC:
+            monitor2(val_loss, model)
+        elif monitor_metric2 == ACCURACY_METRIC:
+            monitor2(-avg_accuracy, model)
+        elif monitor_metric2 == F1_METRIC:
+            monitor2(-avg_f1, model)
 
     for epoch in range(0, epochs):
         # Do train step
@@ -897,13 +990,32 @@ def train_paired_classifier(model: PairedProtMotionNet,
             monitor(val_loss, model)
         elif monitor_metric == ACCURACY_METRIC:
             monitor(-avg_accuracy, model)
+        elif monitor_metric == F1_METRIC:
+            monitor(-avg_f1, model)
 
-        if monitor.early_stop:
-            if logger is None:
-                print(f"Epoch {epoch}: early stopping, restoring model checkpoint {checkpoint_path}...")
-            else:
-                logger.log(f"Epoch {epoch}: early stopping, restoring model checkpoint {checkpoint_path}...")
-            break
+        if monitor2 is not None:
+            monitor_metric2 = monitor_metric2.lower()
+            if monitor_metric2 == VAL_LOSS_METRIC:
+                monitor2(val_loss, model)
+            elif monitor_metric2 == ACCURACY_METRIC:
+                monitor2(-avg_accuracy, model)
+            elif monitor_metric2 == F1_METRIC:
+                monitor2(-avg_f1, model)
+
+        if monitor2 is not None:
+            if monitor.early_stop and monitor2.early_stop:
+                if logger is None:
+                    print(f"Epoch {epoch}: early stopping, restoring model checkpoint {checkpoint_path}...")
+                else:
+                    logger.log(f"Epoch {epoch}: early stopping, restoring model checkpoint {checkpoint_path}...")
+                break
+        else:
+            if monitor.early_stop:
+                if logger is None:
+                    print(f"Epoch {epoch}: early stopping, restoring model checkpoint {checkpoint_path}...")
+                else:
+                    logger.log(f"Epoch {epoch}: early stopping, restoring model checkpoint {checkpoint_path}...")
+                break
 
         # Metrics history update
         mht.add_scalar('train_loss', train_loss)

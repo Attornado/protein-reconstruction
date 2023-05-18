@@ -1,4 +1,4 @@
-from typing import final, Iterable, Optional, Literal
+from typing import final, Iterable, Optional, Literal, Callable
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
@@ -19,7 +19,12 @@ EARLY_STOP_PATIENCE: final = 10
 class EarlyStopping(object):
     """Early stops the training if validation loss doesn't improve after a given patience."""
 
-    def __init__(self, patience=EARLY_STOP_PATIENCE, verbose=False, delta=0, path='checkpoint.pt', trace_func=print,
+    def __init__(self,
+                 patience: int = EARLY_STOP_PATIENCE,
+                 verbose: bool = False,
+                 delta: float = 0,
+                 path: str = 'checkpoint.pt',
+                 trace_func: Callable = print,
                  monitored_metric_name: str = VAL_LOSS_METRIC):
         """
         Args:
@@ -36,10 +41,10 @@ class EarlyStopping(object):
             monitored_metric_name (str): name of the monitored metric.
                             Default: VAL_LOSS_METRIC
         """
-        self.patience = patience
-        self.verbose = verbose
-        self.counter = 0
-        self.best_score = None
+        self.__patience: int = patience
+        self.__verbose: bool = verbose
+        self.__counter: int = 0
+        self.__best_score = None
         self.early_stop = False
         self.monitored_metric_best = np.Inf
         self.delta = delta
@@ -47,22 +52,42 @@ class EarlyStopping(object):
         self.trace_func = trace_func
         self.monitored_metric_name = monitored_metric_name
 
+    @property
+    def patience(self) -> int:
+        return self.__patience
+
+    @patience.setter
+    def patience(self, patience: int):
+        self.__patience = patience
+
+    @property
+    def verbose(self) -> bool:
+        return self.__verbose
+
+    @verbose.setter
+    def verbose(self, verbose: bool):
+        self.__verbose = verbose
+
+    @property
+    def counter(self) -> int:
+        return self.__counter
+
     def __call__(self, monitored_metric, model):
 
         score = -monitored_metric
 
-        if self.best_score is None:
-            self.best_score = score
+        if self.__best_score is None:
+            self.__best_score = score
             self.save_checkpoint(monitored_metric, model)
-        elif score < self.best_score + self.delta:
-            self.counter += 1
+        elif score < self.__best_score + self.delta:
+            self.__counter += 1
             self.trace_func(f'EarlyStopping counter: {self.counter} out of {self.patience}')
             if self.counter >= self.patience:
                 self.early_stop = True
         else:
-            self.best_score = score
+            self.__best_score = score
             self.save_checkpoint(monitored_metric, model)
-            self.counter = 0
+            self.__counter = 0
 
     def save_checkpoint(self, monitored_metric, model):
         """Saves model when monitored metric improves."""

@@ -547,8 +547,16 @@ class PositionWiseFeedForward(SerializableModule):
     }
     ACTIVATIONS: final = frozenset(__ACTIVATIONS.keys())
 
-    def __init__(self, d_model: int, d_ff: int, dropout: float = 0.0, activation: str = "gelu", is_gated: bool = False,
-                 bias1: bool = True, bias2: bool = True, bias_gate: bool = True):
+    def __init__(self,
+                 d_model: int,
+                 d_ff: int,
+                 dropout: float = 0.0,
+                 activation: str = "gelu",
+                 pre_norm: bool = True,
+                 is_gated: bool = False,
+                 bias1: bool = True,
+                 bias2: bool = True,
+                 bias_gate: bool = True):
         """
         Position-wise feed-forward neural network module processing multiple embeddings in parallel.
 
@@ -556,12 +564,12 @@ class PositionWiseFeedForward(SerializableModule):
         * `d_ff` is the number of features in the hidden layer of the FFN
         * `dropout` is dropout probability for the hidden layer
         * `activation` is the activation function for the hidden layer
+        * `pre_norm` whether to apply pre-norm or post-norm in the layer normalization
         * `is_gated` specifies whether the hidden layer is gated
         * `bias1` specified whether the first fully connected layer should have a learnable bias
         * `bias2` specified whether the second fully connected layer should have a learnable bias
         * `bias_gate` specified whether the fully connected layer for the gate should have a learnable bias
         """
-        # TODO: test this
         super().__init__()
 
         # Layer one parameterized by weight $W_1$ and bias $b_1$
@@ -581,6 +589,9 @@ class PositionWiseFeedForward(SerializableModule):
         self.__bias1: bool = bias1
         self.__bias2: bool = bias2
         self.__bias_gate: bool = bias_gate
+
+        # Store wethever applying pre-norm or post-norm
+        self.__pre_norm = pre_norm
 
         # Hidden layer dropout
         if not 0 <= dropout < 1:
@@ -640,9 +651,21 @@ class PositionWiseFeedForward(SerializableModule):
     def bias_gate(self) -> bool:
         return self.__bias_gate
 
+    @property
+    def pre_norm(self) -> bool:
+        return self.__pre_norm
+
+    @pre_norm.setter
+    def pre_norm(self, pre_norm: bool):
+        self.__pre_norm = pre_norm
+
     def forward(self, x: torch.Tensor, add_norm: bool = True):
-        # TODO: test this
         x0 = x
+
+        # Pre-norm if required, in pre-norm
+        if add_norm and self.pre_norm:
+            x = self.norm0(x)
+
         # $f(x W_1 + b_1)$
         g = self.__ACTIVATIONS[self.activation](self.dense0(x))
         # If gated, $f(x W_1 + b_1) \otimes (x V + b) $
@@ -659,8 +682,8 @@ class PositionWiseFeedForward(SerializableModule):
         # Apply second dense
         x = self.dense1(x)
 
-        # Add&Norm if required
-        if add_norm:
+        # Add & post-norm if required
+        if add_norm and not self.pre_norm:
             x = self.norm0(x0 + x)
 
         return x
