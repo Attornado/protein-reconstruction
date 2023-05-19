@@ -1,4 +1,4 @@
-from typing import List, final, Optional
+from typing import List, final, Optional, Type
 import torch
 from torch.nn.functional import softmax
 from models.classification.classifiers import GraphClassifier
@@ -154,3 +154,20 @@ class EnsembleGraphClassifier(torch.nn.Module):
             preds_ensemble = torch.tensor(true_preds)
 
         return preds_ensemble
+
+
+def load_classifier(path_checkpoint: str,
+                    path_config_dict: str,
+                    cls: Type[GraphClassifier],
+                    strict_weight_load: bool = True,
+                    **additional_args) -> GraphClassifier:
+
+    # Load config dict and state_dict
+    checkpoint = torch.load(path_checkpoint)
+    config_dict = torch.load(path_config_dict)
+
+    # Instantiate classifier and load weights
+    classifier = cls.from_constructor_params(constructor_params=config_dict, **additional_args)
+    classifier.load_state_dict(checkpoint, strict=strict_weight_load)
+
+    return classifier
