@@ -30,16 +30,16 @@ WARM_UP_EPOCHS: final = 80
 WEIGHT_DECAY: final = 1e-6
 OPTIMIZER: final = "adamw"
 EARLY_STOPPING_PATIENCE: final = 35
-EXPERIMENT_NAME: final = 'paired_protmotionnet_test7'
+EXPERIMENT_NAME: final = 'paired_protmotionnet_test8'
 EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "classification", "paired_protmotionnet")
 RESTORE_CHECKPOINT: final = True
 USE_CLASS_WEIGHTS: final = True
 USE_UNBALANCED_SAMPLER: final = False
 USE_DYNAMIC_BATCH: final = True
-DYNAMIC_BATCH_SIZE: final = 25000
+DYNAMIC_BATCH_SIZE: final = 24000
 LABEL_SMOOTHING: final = 0.1
 IN_CHANNELS: final = 10
-CONF_COUNT_START: final = 7
+CONF_COUNT_START: final = 0
 
 
 def main():
@@ -83,7 +83,7 @@ def main():
     grid_values = {
         'dropout': [0.3, 0.5],
         "model_name": ["gunet"],  # had GCN, GAT, SAGE, "diff_pool", "gunet"
-        'embedding_dim': [64, 128, 256],  # [32, 64, 128, 256]
+        'embedding_dim': [128],  # [32, 64, 128, 256]
         'n_heads_gat': [8],  # [8]
         "dense_num": [1, 2],  # [2, 3]
         "n_layers": [4],  # [1, 5, 20, 50, 100]
@@ -97,7 +97,7 @@ def main():
                     for d in grid_values['dropout']:
                         for lr in grid_values['learning_rate']:
                             for nh in grid_values['n_heads_gat'] if m == GAT else [1]:
-                                d = random.choice([d, d, d, 0.5])
+                                d = random.choice([d, d, d, 0.5, 0.4])
                                 if nl == 50:
                                     nl = random.choice([nl, 80])
                                 nh = random.choice([nh, 16])
@@ -130,6 +130,7 @@ def main():
                                     elif dn == 3:
                                         dense_units = [emb, int(emb/2), n_classes]
                                         dense_activations = ["gelu", "gelu", "linear"]
+
                                     encoder = None
                                     if m == RevGATConvEncoder.MODEL_TYPE:
                                         encoder = RevGATConvEncoder(
@@ -202,16 +203,18 @@ def main():
                                             dropout=d
                                         )
                                     else:
+                                        encoder_out_channels = emb*nl if m == "gunet" and not encoder.sum_res else emb
                                         model = PairedProtMotionNet(
                                             encoder=encoder,
-                                            encoder_out_channels=emb,
+                                            encoder_out_channels=encoder_out_channels,
                                             dense_units=dense_units,
                                             dense_activations=dense_activations,
                                             dim_features=in_channels,
                                             dropout=d,
                                             readout=random.choice(["mean_pool"]),
-                                            num_heads=2,
-                                            forward_batch_index=True if m == "grunet" or m == "gunet" else False
+                                            num_heads=4,  # try 2
+                                            forward_batch_index=True if m == "grunet" or m == "gunet" else False,
+                                            use_ff=True
                                         )
 
                                     l2 = WEIGHT_DECAY
@@ -303,8 +306,6 @@ def main():
                                                    f"with accuracy "
                                                    f"{metrics['accuracy']} acc, saving it in best dir")
                                         best_model_acc = metrics['accuracy']
-                                        best_conf = config
-                                        best_lr = lr
                                         constructor_params = model.serialize_constructor_params()
                                         state_dict = model.state_dict()
                                         torch.save(state_dict, os.path.join(full_experiment_path,

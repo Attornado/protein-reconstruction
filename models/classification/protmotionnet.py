@@ -172,12 +172,21 @@ class ProtMotionNet(GraphClassifier):
 
         return constructor_params
 
-    # noinspection PyMethodOverriding
     @classmethod
-    def from_constructor_params(cls,
-                                constructor_params: dict,
-                                encoder_constructor: Type[SerializableModule],
-                                *args, **kwargs):
+    def from_constructor_params(cls, constructor_params: dict, *args, **kwargs):
+        """
+        Construct a ProtMotionNet instance from given parameters.
+
+        :param constructor_params: the constructor parameters provided as dictionary.
+        :param kwargs: must contain the class of the encoder given as "encoder_constructor" parameter.
+
+        :return: the instantiated ProtMotionNet.
+        """
+
+        if "encoder_constructor" not in kwargs:
+            raise ValueError("Expected key-value argument 'encoder_constructor' was not provided.")
+        encoder_constructor: Type[SerializableModule] = kwargs["encoder_constructor"]
+
         # Deserialize encoder
         encoder_constructor_params = constructor_params["encoder"]["constructor_params"]
         encoder_state_dict = constructor_params["encoder"]["state_dict"]
@@ -453,28 +462,50 @@ class PairedProtMotionNet(ProtMotionNet):
 
 
 class TransformerPairedProtMotionNet(PairedProtMotionNet):
-    def __init__(self, encoder: SerializableModule, encoder_out_channels: int, dense_units: list[int],
-                 dense_activations: list[str], dim_features: int, n_blocks: int, num_heads: int = 8,
-                 kdim: Optional[int] = None, vdim: Optional[int] = None, dropout: float = 0.0,
-                 readout: str = 'mean_pool', forward_batch_index: bool = False, d_ff: Optional[int] = None,
-                 ff_activation: str = "gelu", pre_norm: bool = True):
-        super(TransformerPairedProtMotionNet, self).__init__(encoder=encoder, encoder_out_channels=encoder_out_channels,
+    def __init__(self,
+                 encoder: SerializableModule,
+                 encoder_out_channels: int,
+                 dense_units: list[int],
+                 dense_activations: list[str],
+                 dim_features: int,
+                 n_blocks: int,
+                 num_heads: int = 4,
+                 num_heads_cross: int = 4,
+                 kdim: Optional[int] = None,
+                 vdim: Optional[int] = None,
+                 dropout: float = 0.0,
+                 readout: str = 'mean_pool',
+                 forward_batch_index: bool = False,
+                 d_ff: Optional[int] = None,
+                 ff_activation: str = "gelu",
+                 pre_norm: bool = True):
+        super(TransformerPairedProtMotionNet, self).__init__(encoder=encoder,
+                                                             encoder_out_channels=encoder_out_channels,
                                                              dense_activations=dense_activations,
-                                                             dim_features=dim_features, dense_units=dense_units,
-                                                             num_heads=num_heads, kdim=kdim, vdim=vdim, dropout=dropout,
-                                                             readout=readout, forward_batch_index=forward_batch_index)
+                                                             dim_features=dim_features,
+                                                             dense_units=dense_units,
+                                                             num_heads=num_heads_cross,
+                                                             kdim=kdim,
+                                                             vdim=vdim,
+                                                             dropout=dropout,
+                                                             readout=readout,
+                                                             forward_batch_index=forward_batch_index,
+                                                             use_ff=True)
         transformer_block = TransformerEncoderLayer(
             d_model=encoder_out_channels,
             nhead=num_heads,
-            dim_feedforward=d_ff if d_ff is not None else encoder_out_channels,
+            dim_feedforward=d_ff if d_ff is not None else encoder_out_channels*4,
             activation=self._ACTIVATIONS[ff_activation],
             norm_first=pre_norm,
             batch_first=False,
             device=None
         )
-        self._transformer_encoder = TransformerEncoder(encoder_layer=transformer_block, num_layers=n_blocks,
-                                                       norm=None, enable_nested_tensor=True)
+        self._transformer_encoder = TransformerEncoder(encoder_layer=transformer_block,
+                                                       num_layers=n_blocks,
+                                                       norm=None,
+                                                       enable_nested_tensor=True)
 
+        self.__num_heads_transformer = num_heads
         self.__d_ff: Optional[int] = d_ff
         self.__pre_norm: bool = pre_norm
         self.__ff_activation: str = ff_activation
@@ -482,7 +513,7 @@ class TransformerPairedProtMotionNet(PairedProtMotionNet):
 
     @property
     def d_ff(self) -> int:
-        return self.__d_ff if self.__d_ff is not None else self.encoder_out_channels
+        return self.__d_ff if self.__d_ff is not None else self.encoder_out_channels*4
 
     @property
     def pre_norm(self) -> bool:
@@ -496,10 +527,20 @@ class TransformerPairedProtMotionNet(PairedProtMotionNet):
     def n_blocks(self) -> int:
         return self.__n_blocks
 
+    @property
+    def num_heads_transformer(self) -> int:
+        return self.__num_heads_transformer
+
     def serialize_constructor_params(self, *args, **kwargs) -> dict:
         constructor_params = super(TransformerPairedProtMotionNet, self).serialize_constructor_params(*args, **kwargs)
-        constructor_params.update({"d_ff": self.__d_ff, "pre_norm": self.__pre_norm,
-                                   "ff_activation": self.__ff_activation, "n_blocks": self.__n_blocks})
+        constructor_params["num_heads_cross"] = constructor_params["num_heads"]
+        constructor_params["num_heads"] = self.num_heads_transformer
+        constructor_params.update({
+            "d_ff": self.__d_ff,
+            "pre_norm": self.__pre_norm,
+            "ff_activation": self.__ff_activation,
+            "n_blocks": self.__n_blocks
+        })
         return constructor_params
 
     def forward(self,
