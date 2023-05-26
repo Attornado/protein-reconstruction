@@ -52,7 +52,6 @@ class EnsembleGraphClassifier(torch.nn.Module):
 
         # Compute weights, 1 for each model if not given
         weights = torch.tensor(weights) if weights is not None else torch.tensor([1.0 for _ in range(0, len(models))])
-        weights = weights
         self.__weights = weights
 
     @property
@@ -112,6 +111,11 @@ class EnsembleGraphClassifier(torch.nn.Module):
         # Get list with all model predictions as logits vector with shape (B, N_CLASSES)
         logits_ensemble: List[torch.Tensor] = self(*args, **kwargs)
 
+        # If got multiple outputs, get the first one only by convention
+        for i, logits in enumerate(logits_ensemble):
+            if isinstance(logits, tuple):
+                logits_ensemble[i] = logits[0]
+
         # Apply softmax to each logits vector, adding a dim to the softmax vector to obtain shape (B, 1, N_CLASSES)
         preds_ensemble = [softmax(logits, dim=-1).unsqueeze(dim=1) for logits in logits_ensemble]
 
@@ -123,19 +127,20 @@ class EnsembleGraphClassifier(torch.nn.Module):
             # Compute weighted average of the softmax, multiplying the weights with the Einstein's notation
             # Here we have two tensors, with shape (B, N_MODELS, N_CLASSES) and (N_MODELS,), and the following means
             # that we are element-wise multiplying the 1st tensor alongside the dimension 2 of the 2nd tensor
-            preds_ensemble = torch.einsum("j,ijk -> ijk", self.weights, preds_ensemble)
+            preds_ensemble = torch.einsum("j,ijk -> ijk", self.weights.to(self.device), preds_ensemble)
 
             # Sum the tensor with shape (B, N_MODELS, N_CLASSES) alongside dimension 1, obtaining shape (B, N_CLASSES)
             preds_ensemble = torch.sum(preds_ensemble, dim=1)
 
             # Divide by the sum of the weights to obtain the weighted average of the softmax vectors
-            preds_ensemble = preds_ensemble / torch.sum(self.weights)
+            preds_ensemble = preds_ensemble / torch.sum(self.weights.to(self.device))
 
             if return_probs:
                 return preds_ensemble
 
         # Get predictions from probabilities
         y_pred_ensemble = torch.argmax(preds_ensemble, dim=-1)
+        preds_ensemble = y_pred_ensemble
 
         # If hard/soft voting is required
         if self.ensemble_mode == VOTING:

@@ -72,16 +72,18 @@ class MeanPoolReadout(object):
 
 
 class CorruptionFunction(abc.ABC):
-    def __init__(self, device: torch.device):
+    def __init__(self, device: torch.device, return_batch: bool = False):
         """
         This class represents a generic corruption function to be used in Deep Graph Infomax models.
 
         :param device: The device to run the corruption function on
+        :param return_batch: Whether to return batch or not
         :type device: torch.device
         """
         super().__init__()
         self.__device = device
         self.__batch: Optional[torch.Tensor] = None  # last corrupted batch
+        self.__return_batch = return_batch
 
     @property
     def batch(self) -> Optional[torch.Tensor]:
@@ -121,6 +123,14 @@ class CorruptionFunction(abc.ABC):
         """
         self.__device = device
 
+    @property
+    def return_batch(self) -> bool:
+        return self.__return_batch
+
+    @return_batch.setter
+    def return_batch(self, return_batch: bool):
+        self.__return_batch = return_batch
+
     def to(self, device: torch.device):
         """
         Sets the corruption function device to the given one.
@@ -149,14 +159,14 @@ class CorruptionFunction(abc.ABC):
 
 
 class RandomPermutationCorruption(CorruptionFunction):
-    def __init__(self, device: torch.device):
+    def __init__(self, device: torch.device, return_batch: bool = False):
         """
         A corruption function that randomly permutes the given data batch features.
 
         :param device: The device to run the corruption on
         :type device: torch.device
         """
-        super().__init__(device)
+        super().__init__(device=device, return_batch=return_batch)
 
     def __call__(self, x: torch.Tensor, edge_index: torch.Tensor, return_batch: bool = False,
                  batch: Optional[torch.Tensor] = None, *args, **kwargs):
@@ -189,15 +199,15 @@ class RandomPermutationCorruption(CorruptionFunction):
 
         # Batch remains the same
         self.batch = batch
-        if return_batch:
+        if return_batch or self.return_batch:
             return_tuple.append(batch)
 
         return tuple(return_tuple)
 
 
 class RandomSampleCorruption(CorruptionFunction):
-    def __init__(self, train_data: DataLoader, val_data: DataLoader, device: torch.device):
-        super().__init__(device)
+    def __init__(self, train_data: DataLoader, val_data: DataLoader, device: torch.device, return_batch: bool = False):
+        super().__init__(device=device, return_batch=return_batch)
         self.__train_data = train_data
         self.__val_data = val_data
         self.__iter_train_data = iter(train_data)
@@ -238,7 +248,7 @@ class RandomSampleCorruption(CorruptionFunction):
                 return_tuple.append(corrupted_graph[k])  # add other required graph features
 
         self.batch = corrupted_graph.batch
-        if return_batch:
+        if return_batch or self.return_batch:
             return_tuple.append(corrupted_graph.batch)
 
         return tuple(return_tuple)
@@ -265,13 +275,15 @@ class DeepGraphInfomaxV2(DeepGraphInfomax, SerializableModule):
                  readout: Callable,
                  corruption: CorruptionFunction,
                  normalize_hidden: bool = True,
-                 dropout: float = 0.0
+                 dropout: float = 0.0,
+                 forward_batch: bool = False
                  ):
         super().__init__(hidden_channels=hidden_channels, encoder=encoder, summary=readout, corruption=corruption)
 
         self._norm = None
         self.__normalize_hidden = normalize_hidden
         self.__dropout = dropout
+        self.__forward_batch = forward_batch
 
         if normalize_hidden:
             self._norm = LayerNorm(hidden_channels, elementwise_affine=True)
@@ -284,12 +296,21 @@ class DeepGraphInfomaxV2(DeepGraphInfomax, SerializableModule):
     def normalize_hidden(self) -> bool:
         return self.__normalize_hidden
 
+    @property
+    def forward_batch(self) -> bool:
+        return self.__forward_batch
+
+    @forward_batch.setter
+    def forward_batch(self, forward_batch: bool):
+        self.__forward_batch = forward_batch
+
     # noinspection PyTypedDict
     def serialize_constructor_params(self, *args, **kwargs) -> dict:
         constructor_params = {
             "hidden_channels": self.hidden_channels,
             "dropout": self.__dropout,
-            "normalize_hidden": self.__normalize_hidden
+            "normalize_hidden": self.__normalize_hidden,
+            "forward_batch": self.__forward_batch
         }
 
         # Serialize encoder
@@ -328,6 +349,7 @@ class DeepGraphInfomaxV2(DeepGraphInfomax, SerializableModule):
         hidden_channels = constructor_params["hidden_channels"]
         normalize_hidden = constructor_params["normalize_hidden"]
         dropout = constructor_params["dropout"]
+        forward_batch = constructor_params["forward_batch"]
 
         return cls(
             hidden_channels=hidden_channels,
@@ -335,7 +357,8 @@ class DeepGraphInfomaxV2(DeepGraphInfomax, SerializableModule):
             readout=readout,
             corruption=corruption,
             normalize_hidden=normalize_hidden,
-            dropout=dropout
+            dropout=dropout,
+            forward_batch=forward_batch
         )
 
     def forward(self, x, edge_index, batch=None, *args, **kwargs):
@@ -343,7 +366,10 @@ class DeepGraphInfomaxV2(DeepGraphInfomax, SerializableModule):
         if isinstance(self.summary, MeanPoolReadout):
             self.summary.batch = batch
 
-        pos_z, neg_z, summary = super().forward(x=x, edge_index=edge_index, *args, **kwargs)
+        if self.forward_batch:
+            pos_z, neg_z, summary = super().forward(x=x, edge_index=edge_index, batch=batch, *args, **kwargs)
+        else:
+            pos_z, neg_z, summary = super().forward(x=x, edge_index=edge_index, *args, **kwargs)
 
         if self._norm is not None:
             summary = self._norm(summary)
@@ -367,7 +393,10 @@ class DeepGraphInfomaxV2(DeepGraphInfomax, SerializableModule):
         # pos_z, neg_z, summary = self(x, edge_index, batch=batch, *args, **kwargs)
 
         # Get positive sample predictions and the corresponding summary
-        pos_z = self.encoder(x, edge_index, *args, **kwargs)
+        if self.forward_batch:
+            pos_z = self.encoder(x, edge_index, batch=batch, *args, **kwargs)
+        else:
+            pos_z = self.encoder(x, edge_index, *args, **kwargs)
         summary = self.summary(pos_z, x, edge_index, batch=batch, *args, **kwargs)
 
         # Get corrupted graphs and corresponding batch index
@@ -375,7 +404,9 @@ class DeepGraphInfomaxV2(DeepGraphInfomax, SerializableModule):
         if batch is not None:
             cor = self.corruption(x, edge_index, return_batch=True, batch=batch, *args, **kwargs)
             neg_batch = cor[-1]  # get the negative sample batching
-            cor = cor[0:-1]  # remove the batch
+
+            if not self.forward_batch:
+                cor = cor[0:-1]  # remove the batch if it shouldn't be forwarded
         else:
             cor = self.corruption(x, edge_index, *args, **kwargs)
 

@@ -28,8 +28,9 @@ class SAGEClassifier(GraphClassifier):
 
         num_layers = config['num_layers']
         dim_embedding = config['dim_embedding']
-        self.aggregation = config['aggregation']  # can be mean or max
+        return_embeddings: bool = config["return_embeddings"]
 
+        self.aggregation = config['aggregation']  # can be mean or max
         if self.aggregation == 'max':
             self.fc_max = nn.Linear(dim_embedding, dim_embedding)
 
@@ -43,24 +44,45 @@ class SAGEClassifier(GraphClassifier):
 
             self.layers.append(conv)
 
-        # For graph classification
-        self.fc1 = nn.Linear(num_layers * dim_embedding, dim_embedding)
-        self.fc2 = nn.Linear(dim_embedding, dim_target)
+        self.fc1 = None
+        self.fc2 = None
+        if not return_embeddings:
+            # For graph classification
+            self.fc1 = nn.Linear(num_layers * dim_embedding, dim_embedding)
+            self.fc2 = nn.Linear(dim_embedding, dim_target)
 
-    def forward(self, x: torch.Tensor, edge_index: torch.Tensor, batch: torch.Tensor):
+    @property
+    def return_embeddings(self) -> bool:
+        return self.config_dict["return_embeddings"]
+
+    @return_embeddings.setter
+    def return_embeddings(self, return_embeddings: bool):
+        self.config_dict["return_embeddings"] = return_embeddings
+
+    def forward(self,
+                x: torch.Tensor,
+                edge_index: torch.Tensor,
+                batch: torch.Tensor,
+                return_embeddings: bool = False) -> torch.Tensor:
         # x, edge_index, batch = data.x, data.edge_index, data.batch
 
+        # Get predictions from each SAGE layer
         x_all = []
-
         for i, layer in enumerate(self.layers):
             x = layer(x, edge_index)
             if self.aggregation == 'max':
                 x = torch.relu(self.fc_max(x))
             x_all.append(x)
 
+        # Concat all predictions
         x = torch.cat(x_all, dim=1)
-        x = global_max_pool(x, batch)
 
+        # Return embeddings if required
+        if return_embeddings or self.return_embeddings:
+            return x
+
+        # Apply readout and fully-connected layers
+        x = global_max_pool(x, batch)
         x = F.relu(self.fc1(x))
         x = self.fc2(x)
         return x

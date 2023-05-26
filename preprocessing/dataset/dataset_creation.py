@@ -9,7 +9,7 @@ from preprocessing.constants import MOTION_TYPE, PDB, PARAMS_DIR_SUFFIX, PARAMS_
     NUM_CORES, PDB_BOUND, ENZYMES_CLASS, FOLD_CLASS
 from functools import partial
 from graphein.protein.edges.distance import add_hydrogen_bond_interactions, add_peptide_bonds, \
-    add_disulfide_interactions, add_aromatic_sulphur_interactions, add_ionic_interactions
+    add_disulfide_interactions, add_aromatic_sulphur_interactions  # , add_ionic_interactions
 from graphein.ml import InMemoryProteinGraphDataset, GraphFormatConvertor, ProteinGraphDataset
 import graphein.ml.conversion as gmlc
 from typing import final, Union, Optional, List, Any
@@ -17,6 +17,7 @@ from preprocessing.dataset.paired_dataset import PairedProteinGraphDataset
 from preprocessing.utils import FrozenDict
 from torch_geometric.transforms import BaseTransform
 from graphein.protein.features.nodes import meiler_embedding
+from graphein.protein.features.graph import add_modes
 from preprocessing.dataset.edge_functions import add_k_nn_edges
 
 
@@ -36,7 +37,9 @@ NODE_METADATA_FUNCTIONS: final = FrozenDict({
     # "amino_acid_one_hot": amino_acid_one_hot,  # was commented
     # "hbond_donors": hydrogen_bond_donor,
     # "hbond_acceptors": hydrogen_bond_acceptor
-
+})
+GRAPH_METADATA_FUNCTIONS: final = FrozenDict({
+    "add_modes": add_modes
 })
 DATASET_NAME_PSCDB: final = "pscdb_cleaned"
 DATASET_NAME_PRETRAINED: final = "pretrain_cleaned"
@@ -677,10 +680,16 @@ def create_dataset_pretrain(pdb_paths: List[str],
     # Handle additional node features like Meiler's embeddings and amino-acid one-hot encoding, updating the config dict
     if len(NODE_METADATA_FUNCTIONS) > 0:
         config.update({"node_metadata_functions": list(NODE_METADATA_FUNCTIONS.values())})
+    if len(GRAPH_METADATA_FUNCTIONS) > 0:
+        config.update({"graph_metadata_functions": list(GRAPH_METADATA_FUNCTIONS.values())})
     config = ProteinGraphConfig(**config)
 
     # Adding additional node features to the columns the graph format converter needs to store
-    columns = list(NODE_METADATA_FUNCTIONS.keys())
+    columns = list(NODE_METADATA_FUNCTIONS.keys()) + list(GRAPH_METADATA_FUNCTIONS.keys())
+
+    if "add_modes" in GRAPH_METADATA_FUNCTIONS:
+        columns.extend(["nma_eigenvectors", "nma_eigenvalues"])
+
     if conversion_verbosity == "gnn":
         columns.extend([
             "edge_index",

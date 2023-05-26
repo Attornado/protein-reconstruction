@@ -57,8 +57,14 @@ class ProtMotionNet(GraphClassifier):
     }
     ACTIVATIONS: final = frozenset(_ACTIVATIONS.keys())
 
-    def __init__(self, encoder: SerializableModule, encoder_out_channels: int, dense_units: list[int],
-                 dense_activations: list[str], dim_features: int, dropout: float = 0.0, readout: str = 'mean_pool',
+    def __init__(self,
+                 encoder: SerializableModule,
+                 encoder_out_channels: int,
+                 dense_units: list[int],
+                 dense_activations: list[str],
+                 dim_features: int,
+                 dropout: float = 0.0,
+                 readout: str = 'mean_pool',
                  forward_batch_index: bool = False):
 
         super(ProtMotionNet, self).__init__(dim_features=dim_features,
@@ -161,7 +167,8 @@ class ProtMotionNet(GraphClassifier):
             "dense_activations": self.dense_activations,
             "dropout": self.dropout,
             "readout": self.readout,
-            "forward_batch_index": self.forward_batch_index
+            "forward_batch_index": self.forward_batch_index,
+            "dim_features": self.in_channels,
         }
 
         # Serialize encoder
@@ -506,7 +513,7 @@ class TransformerPairedProtMotionNet(PairedProtMotionNet):
                                                        enable_nested_tensor=True)
 
         self.__num_heads_transformer = num_heads
-        self.__d_ff: Optional[int] = d_ff
+        self.__d_ff: Optional[int] = d_ffcon
         self.__pre_norm: bool = pre_norm
         self.__ff_activation: str = ff_activation
         self.__n_blocks: int = n_blocks
@@ -599,8 +606,13 @@ class _DiffPoolEmbedding(DiffPool):
 
 
 class DiffPoolPairedProtMotionNet(PairedProtMotionNet):
-    def __init__(self, diff_pool_config: dict, encoder_out_channels: int, dense_units: list[int],
-                 dense_activations: list[str], dim_features: int, dropout: float = 0.0):
+    def __init__(self,
+                 diff_pool_config: dict,
+                 encoder_out_channels: int,
+                 dense_units: list[int],
+                 dense_activations: list[str],
+                 dim_features: int,
+                 dropout: float = 0.0):
         encoder = _DiffPoolEmbedding(dim_features=dim_features, dim_target=dense_units[-1], config=diff_pool_config)
         super().__init__(encoder=encoder, encoder_out_channels=encoder_out_channels*2, dense_units=dense_units,
                          dense_activations=dense_activations, dim_features=dim_features, dropout=dropout, num_heads=1)
@@ -613,6 +625,10 @@ class DiffPoolPairedProtMotionNet(PairedProtMotionNet):
     def serialize_constructor_params(self, *args, **kwargs) -> dict:
         constructor_params = super().serialize_constructor_params(*args, **kwargs)
         del constructor_params["encoder"]
+        del constructor_params["readout"]
+        del constructor_params['num_heads']
+        del constructor_params['kdim']
+        del constructor_params['vdim']
         constructor_params["diff_pool_config"] = self.diff_pool_config
         return constructor_params
 
@@ -620,7 +636,8 @@ class DiffPoolPairedProtMotionNet(PairedProtMotionNet):
     def from_constructor_params(cls,
                                 constructor_params: dict,
                                 *args, **kwargs):
-        cls(**constructor_params)
+        constructor_params["encoder_out_channels"] = int(constructor_params["encoder_out_channels"]/2)
+        return cls(**constructor_params)
 
     def _get_cross_embeddings(self,
                               x: Union[Tensor, tuple[Tensor, Tensor]],
@@ -740,7 +757,6 @@ def train_step_paired_classifier(model: PairedProtMotionNet,
                                  device: torch.device,
                                  criterion: ClassificationLoss = MulticlassClassificationLoss(),
                                  logger: Optional[Logger] = None):
-    # TODO: test this
     # Put the model in training mode
     model.train()
 
@@ -805,8 +821,7 @@ def test_step_paired_classifier(model: PairedProtMotionNet,
                                 device: torch.device,
                                 top_k: int = 3,
                                 criterion: ClassificationLoss = MulticlassClassificationLoss()):
-    # TODO: test this
-    # put the model in evaluation mode
+    # Put the model in evaluation mode
     model.eval()
 
     # Running average for loss, precision and AUC
@@ -819,9 +834,6 @@ def test_step_paired_classifier(model: PairedProtMotionNet,
     steps: int = 1
 
     for data in iter(val_data):
-        # move batch to device
-        # data = data.to(device)
-
         before: Data = data.a
         after: Data = data.b
         x = before.x.float().to(device)
@@ -874,7 +886,6 @@ def train_paired_classifier(model: PairedProtMotionNet,
                             monitor_metric: str = VAL_LOSS_METRIC,
                             monitor_metric2: str = None,
                             use_tensorboard_log: bool = False) -> (torch.nn.Module, dict):
-    # TODO: test this
     # Move model to device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)

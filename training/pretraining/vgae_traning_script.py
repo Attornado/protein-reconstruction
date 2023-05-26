@@ -2,6 +2,7 @@ import os
 from typing import final
 import torch
 from torch_geometric.loader import DataLoader
+from models.classification.sage import SAGEClassifier
 from models.layers import GCNConvBlock
 from preprocessing.constants import PRETRAIN_CLEANED_TRAIN, PRETRAIN_CLEANED_VAL, DATA_PATH
 from models.pretraining.vgae import VGAEv2, train_vgae, VGEncoder
@@ -10,10 +11,11 @@ from preprocessing.dataset.dataset_creation import load_dataset
 from torch.optim import Adam, Adadelta
 import torchinfo
 
-BATCH_SIZE: final = 200
+
+BATCH_SIZE: final = 160
 EPOCHS: final = 250
 EARLY_STOPPING_PATIENCE: final = 30
-EXPERIMENT_NAME: final = 'vgae_rev_gcn_test17'
+EXPERIMENT_NAME: final = 'vgae_rev_gcn_test18'
 EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "pretraining", "vgae")
 RESTORE_CHECKPOINT: final = True
 
@@ -113,7 +115,6 @@ def main():
         out_channels=100,
         heads=5
     )
-    """
 
     encoder = RevGCNEncoder(
         in_channels=in_channels,
@@ -125,14 +126,24 @@ def main():
         num_groups=5,
         normalize_hidden=True
     )
+    """
 
-    encoder_mu = GCNConvBlock(
-        in_channels=100,
-        out_channels=100,
+    emb_dim = 256
+    n_layers = 3
+    encoder_mu = SAGEClassifier(dim_features=in_channels,
+                                dim_target=7,
+                                config={"dim_embedding": emb_dim,
+                                        "num_layers": n_layers,
+                                        "return_embeddings": True,
+                                        'aggregation': 'mean'})
+
+    '''encoder_mu = GCNConvBlock(
+        in_channels=emb_dim,
+        out_channels=emb_dim,
         improved=True
-    )
+    )'''
 
-    vgencoder = VGEncoder(shared_encoder=encoder, encoder_mu=encoder_mu)
+    vgencoder = VGEncoder(shared_encoder=None, encoder_mu=encoder_mu)
     vgae = VGAEv2(encoder=vgencoder)
 
     full_experiment_path = os.path.join(EXPERIMENT_PATH, EXPERIMENT_NAME)
@@ -152,7 +163,7 @@ def main():
     print(vgae)
     print(torchinfo.summary(vgae, depth=5))
 
-    optimizer = Adam(vgae.parameters(), lr=0.1, weight_decay=5e-4)
+    # optimizer = Adam(vgae.parameters(), lr=0.1, weight_decay=5e-4)
     optimizer = Adadelta(vgae.parameters())
     model = train_vgae(
         vgae,
@@ -162,7 +173,8 @@ def main():
         optimizer=optimizer,
         experiment_path=EXPERIMENT_PATH,
         experiment_name=EXPERIMENT_NAME,
-        early_stopping_patience=EARLY_STOPPING_PATIENCE
+        early_stopping_patience=EARLY_STOPPING_PATIENCE,
+        forward_batch=True
     )
 
     full_experiment_path = os.path.join(EXPERIMENT_PATH, EXPERIMENT_NAME)
