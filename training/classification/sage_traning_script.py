@@ -11,6 +11,7 @@ from preprocessing.dataset.dataset_creation import load_dataset
 from torch.optim import Adam, Adadelta
 import torchinfo
 
+
 BATCH_SIZE: final = 100
 EPOCHS: final = 2000
 EARLY_STOPPING_PATIENCE: final = 150

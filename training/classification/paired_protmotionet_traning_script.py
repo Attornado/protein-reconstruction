@@ -11,8 +11,9 @@ from models.classification.classifiers import MulticlassClassificationLoss
 from models.classification.diffpool import DiffPool, DiffPoolMulticlassClassificationLoss
 from models.classification.protmotionnet import PairedProtMotionNet, train_paired_classifier, \
     DiffPoolPairedProtMotionNet
+from models.classification.sage import SAGEClassifier
 from models.pretraining.encoders import RevGCNEncoder, RevGATConvEncoder, RevSAGEConvEncoder, ResGCN2ConvEncoderV2
-from models.pretraining.gunet import GraphRevUNet, GraphUNetV2
+from models.pretraining.gunet import GraphRevUNet, GraphUNetV2, HierarchicalTopKRevEncoder
 from models.classification.ugformer import GCN, GAT, SAGE
 from preprocessing.constants import PSCDB_CLEANED_TRAIN, PSCDB_CLEANED_VAL, DATA_PATH, \
     PSCDB_CLASS_WEIGHTS, PSCDB_PAIRED_CLASS_WEIGHTS, PSCDB_PAIRED_CLEANED_TRAIN, PSCDB_PAIRED_CLEANED_VAL, \
@@ -27,10 +28,10 @@ from training.training_tools import ACCURACY_METRIC, VAL_LOSS_METRIC
 BATCH_SIZE: final = 10
 EPOCHS: final = 1000
 WARM_UP_EPOCHS: final = 80
-WEIGHT_DECAY: final = 1e-6
-OPTIMIZER: final = "adamw"
+WEIGHT_DECAY: final = 0
+OPTIMIZER: final = "adam"
 EARLY_STOPPING_PATIENCE: final = 35
-EXPERIMENT_NAME: final = 'paired_protmotionnet_test8'
+EXPERIMENT_NAME: final = 'paired_protmotionnet_test12'
 EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "classification", "paired_protmotionnet")
 RESTORE_CHECKPOINT: final = True
 USE_CLASS_WEIGHTS: final = True
@@ -81,13 +82,13 @@ def main():
     conf_count = 0
 
     grid_values = {
-        'dropout': [0.3, 0.5],
-        "model_name": ["gunet"],  # had GCN, GAT, SAGE, "diff_pool", "gunet"
-        'embedding_dim': [128],  # [32, 64, 128, 256]
+        'dropout': [0.1, 0.5],
+        "model_name": ["hier_rev"],  # had GCN, GAT, SAGE, "diff_pool", "gunet", "grunet", "sage_c", "hier_rev"
+        'embedding_dim': [64, 128, 256],  # [32, 64, 128, 256]
         'n_heads_gat': [8],  # [8]
         "dense_num": [1, 2],  # [2, 3]
-        "n_layers": [4],  # [1, 5, 20, 50, 100]
-        "learning_rate": [0.0001, 0.00001]  # [0.0001, 0.00001, 0.000001]
+        "n_layers": [3, 4],  # [1, 5, 20, 50, 100]
+        "learning_rate": [0.001, 0.0001, 0.00001]  # [0.0001, 0.00001, 0.000001]
     }
 
     for m in grid_values['model_name']:
@@ -97,7 +98,7 @@ def main():
                     for d in grid_values['dropout']:
                         for lr in grid_values['learning_rate']:
                             for nh in grid_values['n_heads_gat'] if m == GAT else [1]:
-                                d = random.choice([d, d, d, 0.5, 0.4])
+                                d = random.choice([d, d, d])
                                 if nl == 50:
                                     nl = random.choice([nl, 80])
                                 nh = random.choice([nh, 16])
@@ -187,8 +188,36 @@ def main():
                                             out_channels=emb,
                                             depth=nl,
                                             pool_ratios=pool_ratios,
-                                            sum_res=True,
+                                            sum_res=False,
                                             act="relu"
+                                        )
+                                    elif m == "sage_c":
+                                        encoder = SAGEClassifier(dim_features=in_channels,
+                                                                 dim_target=n_classes,
+                                                                 config={
+                                                                     "num_layers": nl,
+                                                                     "aggregation": "mean",  # can be "mean" or "max"
+                                                                     "dim_embedding": emb,
+                                                                     "return_embeddings": True
+                                                                 })
+                                    elif m == "hier_rev":
+                                        if nl == 3:
+                                            pool_ratios = [0.9, 0.7, 0.6]
+                                        elif nl == 4:
+                                            pool_ratios = [0.9, 0.7, 0.6, 0.5]
+                                        elif nl == 5:
+                                            pool_ratios = [0.9, 0.8, 0.7, 0.6, 0.5]
+                                        else:
+                                            pool_ratios = 0.7
+                                        encoder = HierarchicalTopKRevEncoder(
+                                            in_channels=in_channels,
+                                            hidden_channels=emb,
+                                            out_channels=emb,
+                                            num_convs=[1 for _ in range(nl)],
+                                            dropout=d,
+                                            pool_ratios=pool_ratios,
+                                            model_type=RevGCNEncoder.MODEL_TYPE,
+                                            num_groups=2
                                         )
 
                                     if m == "diff_pool":
@@ -203,7 +232,12 @@ def main():
                                             dropout=d
                                         )
                                     else:
-                                        encoder_out_channels = emb*nl if m == "gunet" and not encoder.sum_res else emb
+                                        encoder_out_channels = emb
+                                        if m == "sage_c":
+                                            encoder_out_channels = emb*nl
+                                        forward_batch_index = False
+                                        if m == "grunet" or m == "gunet" or m == "sage_c" or m == "hier_rev":
+                                            forward_batch_index = True
                                         model = PairedProtMotionNet(
                                             encoder=encoder,
                                             encoder_out_channels=encoder_out_channels,
@@ -211,9 +245,9 @@ def main():
                                             dense_activations=dense_activations,
                                             dim_features=in_channels,
                                             dropout=d,
-                                            readout=random.choice(["mean_pool"]),
-                                            num_heads=4,  # try 2
-                                            forward_batch_index=True if m == "grunet" or m == "gunet" else False,
+                                            readout=random.choice(["max_pool"]),
+                                            num_heads=2,  # try 2
+                                            forward_batch_index=forward_batch_index,
                                             use_ff=True
                                         )
 

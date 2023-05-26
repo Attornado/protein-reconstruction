@@ -62,7 +62,7 @@ class HierarchicalTopKRevEncoder(SerializableModule):
                  out_channels: int,
                  num_convs: list[int],
                  dropout: float = 0.0,
-                 pool_ratio: float = 0.5,
+                 pool_ratios: Union[List[float], float] = 0.5,
                  model_type: str = RevGCNEncoder.MODEL_TYPE,
                  num_groups: int = 2,
                  **block_parameters):
@@ -70,8 +70,11 @@ class HierarchicalTopKRevEncoder(SerializableModule):
 
         if dropout < 0 or dropout >= 1:
             raise ValueError(f"Dropout rate must be between 0 and 1 (last excluded). {dropout} given.")
-        if pool_ratio < 0 or pool_ratio >= 1:
-            raise ValueError(f"Pool ratio must be between 0 and 1 (last excluded). {pool_ratio} given.")
+        if isinstance(pool_ratios, float):
+            pool_ratios = [pool_ratios for _ in range(0, len(num_convs))]
+        for pool_ratio in pool_ratios:
+            if pool_ratio < 0 or pool_ratio >= 1:
+                raise ValueError(f"Pool ratios must be between 0 and 1 (last excluded). {pool_ratio} given.")
         if model_type not in self.MODEL_TYPES:
             raise ValueError(f"model_type must be one of {self.MODEL_TYPES}. {model_type} given.")
 
@@ -80,7 +83,7 @@ class HierarchicalTopKRevEncoder(SerializableModule):
         self.__out_channels: int = out_channels
         self.__num_convs: list[int] = num_convs
         self.__dropout: float = dropout
-        self.__pool_ratio: float = pool_ratio
+        self.__pool_ratios: List[float] = pool_ratios
         self.__model_type: str = model_type
         self.__block_params: dict = block_parameters
         self.__num_groups: int = num_groups
@@ -118,7 +121,7 @@ class HierarchicalTopKRevEncoder(SerializableModule):
                                                   num_groups=num_groups,
                                                   **block_parameters)
             if i != 0:
-                top_k_pooling = TopKPooling(in_channels=hidden_channels, ratio=pool_ratio)
+                top_k_pooling = TopKPooling(in_channels=hidden_channels, ratio=pool_ratios[i - 1])
                 self._pools.append(top_k_pooling)
             self._encoder_convs.append(encoder_block)
 
@@ -149,8 +152,8 @@ class HierarchicalTopKRevEncoder(SerializableModule):
         return self.__dropout
 
     @property
-    def pool_ratio(self) -> float:
-        return self.__pool_ratio
+    def pool_ratios(self) -> List[float]:
+        return self.__pool_ratios
 
     @property
     def model_type(self) -> str:
@@ -257,7 +260,7 @@ class HierarchicalTopKRevEncoder(SerializableModule):
             "out_channels": self.out_channels,
             "num_convs": self.num_convs,
             "dropout": self.dropout,
-            "pool_ratio": self.pool_ratio,
+            "pool_ratios": self.pool_ratios,
             "model_type": self.model_type,
             "num_groups": self.num_groups
         }

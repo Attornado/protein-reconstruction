@@ -203,7 +203,7 @@ class VGAEv2(VGAE, SerializableModule):
 
 
 def train_step_vgae(model: VGAEv2, train_data: DataLoader, optimizer, device, use_edge_weight: bool = False,
-                    use_edge_attr: bool = False):
+                    use_edge_attr: bool = False, forward_batch: bool = False):
     model.train()  # put the model in training mode
 
     running_loss = 0.0  # running average loss over the batches
@@ -213,15 +213,28 @@ def train_step_vgae(model: VGAEv2, train_data: DataLoader, optimizer, device, us
         data = data.to(device)  # move batch to device
         optimizer.zero_grad()  # reset the optimizer gradients
 
-        # Encoder output
-        if use_edge_weight and use_edge_attr:
-            z = model.encode(data.x, data.edge_index, edge_attr=data.edge_attr, edge_weight=data.edge_weight)
-        elif use_edge_attr:
-            z = model.encode(data.x, data.edge_index, edge_attr=data.edge_attr)
-        elif use_edge_weight:
-            z = model.encode(data.x, data.edge_index, edge_weight=data.edge_weight)
+        if forward_batch:
+            # Encoder output
+            if use_edge_weight and use_edge_attr:
+                z = model.encode(data.x, data.edge_index, edge_attr=data.edge_attr, edge_weight=data.edge_weight,
+                                 batch=data.batch)
+            elif use_edge_attr:
+                z = model.encode(data.x, data.edge_index, edge_attr=data.edge_attr, batch=data.batch)
+            elif use_edge_weight:
+                z = model.encode(data.x, data.edge_index, edge_weight=data.edge_weight, batch=data.batch)
+            else:
+                z = model.encode(data.x, data.edge_index, batch=data.batch)
+
         else:
-            z = model.encode(data.x, data.edge_index)
+            # Encoder output
+            if use_edge_weight and use_edge_attr:
+                z = model.encode(data.x, data.edge_index, edge_attr=data.edge_attr, edge_weight=data.edge_weight)
+            elif use_edge_attr:
+                z = model.encode(data.x, data.edge_index, edge_attr=data.edge_attr)
+            elif use_edge_weight:
+                z = model.encode(data.x, data.edge_index, edge_weight=data.edge_weight)
+            else:
+                z = model.encode(data.x, data.edge_index)
 
         loss = model.recon_loss(z, data.edge_index)  # reconstruction loss
         kl_divergence_loss = (1 / data.num_nodes) * model.kl_loss()  # KL-divergence loss, should work as mean on nodes
@@ -241,7 +254,7 @@ def train_step_vgae(model: VGAEv2, train_data: DataLoader, optimizer, device, us
 
 @torch.no_grad()
 def test_step_vgae(model: VGAEv2, val_data: DataLoader, device, use_edge_weight: bool = False,
-                   use_edge_attr: bool = False):
+                   use_edge_attr: bool = False, forward_batch: bool = False):
     model.eval()  # put the model in evaluation mode
 
     # Running average for loss, precision and AUC
@@ -253,15 +266,27 @@ def test_step_vgae(model: VGAEv2, val_data: DataLoader, device, use_edge_weight:
     for data in iter(val_data):
         data = data.to(device)  # move batch to device
 
-        # Encoder output
-        if use_edge_weight and use_edge_attr:
-            z = model.encode(data.x, data.edge_index, edge_attr=data.edge_attr, edge_weight=data.edge_weight)
-        elif use_edge_attr:
-            z = model.encode(data.x, data.edge_index, edge_attr=data.edge_attr)
-        elif use_edge_weight:
-            z = model.encode(data.x, data.edge_index, edge_weight=data.edge_weight)
+        if forward_batch:
+            # Encoder output
+            if use_edge_weight and use_edge_attr:
+                z = model.encode(data.x, data.edge_index, edge_attr=data.edge_attr, edge_weight=data.edge_weight,
+                                 batch=data.batch)
+            elif use_edge_attr:
+                z = model.encode(data.x, data.edge_index, edge_attr=data.edge_attr, batch=data.batch)
+            elif use_edge_weight:
+                z = model.encode(data.x, data.edge_index, edge_weight=data.edge_weight, batch=data.batch)
+            else:
+                z = model.encode(data.x, data.edge_index, batch=data.batch)
         else:
-            z = model.encode(data.x, data.edge_index)
+            # Encoder output
+            if use_edge_weight and use_edge_attr:
+                z = model.encode(data.x, data.edge_index, edge_attr=data.edge_attr, edge_weight=data.edge_weight)
+            elif use_edge_attr:
+                z = model.encode(data.x, data.edge_index, edge_attr=data.edge_attr)
+            elif use_edge_weight:
+                z = model.encode(data.x, data.edge_index, edge_weight=data.edge_weight)
+            else:
+                z = model.encode(data.x, data.edge_index)
 
         loss = model.recon_loss(z, data.edge_index)  # reconstruction loss
         kl_divergence_loss = (1 / data.num_nodes) * model.kl_loss()  # KL-divergence loss, should work as mean on nodes
@@ -281,7 +306,8 @@ def test_step_vgae(model: VGAEv2, val_data: DataLoader, device, use_edge_weight:
 
 def train_vgae(model: VGAEv2, train_data: DataLoader, val_data: DataLoader, epochs: int, optimizer,
                experiment_path: str, experiment_name: str, use_edge_weight: bool = False, use_edge_attr: bool = False,
-               early_stopping_patience: int = EARLY_STOP_PATIENCE, early_stopping_delta: float = 0) -> VGAEv2:
+               early_stopping_patience: int = EARLY_STOP_PATIENCE, early_stopping_delta: float = 0,
+               forward_batch: bool = False, tensorboard_log: bool = False) -> VGAEv2:
     # Move model to device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
@@ -290,7 +316,9 @@ def train_vgae(model: VGAEv2, train_data: DataLoader, val_data: DataLoader, epoc
     os.makedirs(experiment_path, exist_ok=True)  # create experiment directory if it doesn't exist
 
     # Instantiate the summary writer
-    writer = SummaryWriter(f'{experiment_path}_{epochs}_epochs')
+    writer = None
+    if tensorboard_log:
+        writer = SummaryWriter(f'{experiment_path}_{epochs}_epochs')
 
     # Early-stopping monitor
     checkpoint_path = os.path.join(f"{experiment_path}", "checkpoint.pt")
@@ -307,6 +335,26 @@ def train_vgae(model: VGAEv2, train_data: DataLoader, val_data: DataLoader, epoc
         name="VGAE training metrics"
     )
 
+    # Do validation step
+    val_loss, auc, avg_precision = test_step_vgae(
+        model=model,
+        val_data=val_data,
+        device=device,
+        use_edge_weight=use_edge_weight,
+        use_edge_attr=use_edge_attr,
+        forward_batch=forward_batch
+    )
+    # Check for early-stopping stuff
+    monitor(val_loss, model)
+
+    print('Epoch: {:d} Validation loss {:.4f}, AUC: {:.4f}, Average precision: {:.4f}'.format(0, val_loss, auc,
+                                                                                              avg_precision))
+    # Tensorboard state update
+    if tensorboard_log:
+        writer.add_scalar('auc_val', auc, 0)  # new line
+        writer.add_scalar('val_loss', val_loss, 0)
+        writer.add_scalar('avg_precision_val', avg_precision, 0)  # new line
+
     for epoch in range(0, epochs):
         # Do train step
         train_loss = train_step_vgae(
@@ -315,7 +363,8 @@ def train_vgae(model: VGAEv2, train_data: DataLoader, val_data: DataLoader, epoc
             optimizer=optimizer,
             device=device,
             use_edge_weight=use_edge_weight,
-            use_edge_attr=use_edge_attr
+            use_edge_attr=use_edge_attr,
+            forward_batch=forward_batch
         )
 
         # Do validation step
@@ -324,17 +373,19 @@ def train_vgae(model: VGAEv2, train_data: DataLoader, val_data: DataLoader, epoc
             val_data=val_data,
             device=device,
             use_edge_weight=use_edge_weight,
-            use_edge_attr=use_edge_attr
+            use_edge_attr=use_edge_attr,
+            forward_batch=forward_batch
         )
 
         print('Epoch: {:d}, Train loss: {:.4f}, Validation loss {:.4f}, '
               'AUC: {:.4f}, Average precision: {:.4f}'.format(epoch + 1, train_loss, val_loss, auc, avg_precision))
 
         # Tensorboard state update
-        writer.add_scalar('train_loss', train_loss, epoch)
-        writer.add_scalar('auc_val', auc, epoch)  # new line
-        writer.add_scalar('val_loss', val_loss, epoch)
-        writer.add_scalar('avg_precision_val', avg_precision, epoch)  # new line
+        if tensorboard_log:
+            writer.add_scalar('train_loss', train_loss, epoch)
+            writer.add_scalar('auc_val', auc, epoch + 1)  # new line
+            writer.add_scalar('val_loss', val_loss, epoch + 1)
+            writer.add_scalar('avg_precision_val', avg_precision, epoch + 1)  # new line
 
         # Check for early-stopping stuff
         monitor(val_loss, model)
