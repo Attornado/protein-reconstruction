@@ -1,3 +1,5 @@
+import os
+import random
 from typing import final, Iterable, Optional, Literal, Callable
 import numpy as np
 import torch
@@ -230,3 +232,14 @@ class MetricsHistoryTracer(object):
 
         # Show plot
         plt.show()
+
+
+def seed_everything(seed):
+    random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    # torch.backends.cudnn.deterministic = True
+    # torch.backends.cudnn.benchmark = True
+    # torch.backends.cudnn.allow_tf32 = False

@@ -13,12 +13,13 @@ from training.training_tools import MetricsHistoryTracer, EarlyStopping, EARLY_S
 
 class VGEncoder(SerializableModule):
     def __init__(self, encoder_mu: SerializableModule, encoder_logstd: Optional[SerializableModule] = None,
-                 shared_encoder: Optional[SerializableModule] = None):
+                 shared_encoder: Optional[SerializableModule] = None, standalone: bool = False):
         super(VGEncoder, self).__init__()
         self._encoder_mu = encoder_mu
 
         self._shared_encoder = shared_encoder
         self.__shared_encoder_given = shared_encoder is not None
+        self.__standalone = standalone
 
         # If no encoder_logstd is given, deep copy the encoder_mu
         self.__encoder_logstd_given = True
@@ -28,18 +29,31 @@ class VGEncoder(SerializableModule):
 
         self._encoder_logstd = encoder_logstd
 
+    @property
+    def standalone(self) -> bool:
+        return self.__standalone
+
+    @standalone.setter
+    def standalone(self, standalone: bool):
+        self.__standalone = standalone
+
     def forward(self, x, edge_index, *args, **kwargs):
 
         # If a shared encoder is given, apply it before encoder the mu and log(std) ones
         if self._shared_encoder is not None:
             x = self._shared_encoder(x, edge_index, *args, **kwargs)
+
+        if self.standalone:
+            return self._encoder_mu(x, edge_index, *args, **kwargs)
+
         return self._encoder_mu(x, edge_index, *args, **kwargs), self._encoder_logstd(x, edge_index, *args, **kwargs)
 
     # noinspection PyTypedDict
     def serialize_constructor_params(self, *args, **kwargs) -> dict:
         constructor_params = {
             "encoder_logstd_given": self.__encoder_logstd_given,
-            "shared_encoder_given": self.__shared_encoder_given
+            "shared_encoder_given": self.__shared_encoder_given,
+            "standalone": self.__standalone
         }
 
         # Encoder logstd params and weights
@@ -79,6 +93,11 @@ class VGEncoder(SerializableModule):
                                 shared_encoder_constructor: Optional[Type[SerializableModule]] = None,
                                 *args, **kwargs):
 
+        try:
+            standalone = constructor_params["standalone"]
+        except KeyError:
+            standalone = False
+
         # If encoder_logstd constructor is not given, its class will be the same as encoder_mu
         if not constructor_params["encoder_logstd_given"]:
             encoder_logstd_constructor = encoder_mu_constructor
@@ -103,7 +122,8 @@ class VGEncoder(SerializableModule):
             shared_encoder = shared_encoder_constructor.from_constructor_params(shared_enc_constructor_params)
             shared_encoder.load_state_dict(state_dict=shared_enc_state_dict)  # set weights
 
-        return cls(encoder_mu=encoder_mu, encoder_logstd=encoder_logstd, shared_encoder=shared_encoder)
+        return cls(encoder_mu=encoder_mu, encoder_logstd=encoder_logstd, shared_encoder=shared_encoder,
+                   standalone=standalone)
 
 
 class VGAEv2(VGAE, SerializableModule):

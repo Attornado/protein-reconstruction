@@ -46,6 +46,9 @@ DATASET_NAME_PRETRAINED: final = "pretrain_cleaned"
 FORMATS: final = frozenset(["pyg", "dgl"])
 VERBOSITIES_CONVERSION: final = frozenset(gmlc.SUPPORTED_VERBOSITY)
 DATASET_TYPES: final = frozenset(["pscdb", "pscdb_paired", "pretrain", "enzymes", "fold"])
+NM_EIGENVECTORS: final = "nma_eigenvectors"
+NM_EIGENVALUES: final = "nma_eigenvalues"
+
 
 # Local-only constants
 __DATAFRAME_PARAM_NAME: final = "df_param_name"
@@ -688,7 +691,7 @@ def create_dataset_pretrain(pdb_paths: List[str],
     columns = list(NODE_METADATA_FUNCTIONS.keys()) + list(GRAPH_METADATA_FUNCTIONS.keys())
 
     if "add_modes" in GRAPH_METADATA_FUNCTIONS:
-        columns.extend(["nma_eigenvectors", "nma_eigenvalues"])
+        columns.extend([NM_EIGENVECTORS, NM_EIGENVECTORS])
 
     if conversion_verbosity == "gnn":
         columns.extend([
