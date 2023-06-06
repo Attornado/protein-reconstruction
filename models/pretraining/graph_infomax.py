@@ -337,7 +337,7 @@ class DeepGraphInfomaxV2(DeepGraphInfomax, SerializableModule):
                                 constructor_params: dict,
                                 encoder_constructor: Type[SerializableModule],
                                 readout: Callable,
-                                corruption: CorruptionFunction,
+                                corruption: Type[CorruptionFunction],
                                 *args, **kwargs):
         # Get encoder constructor params/state dict and construct it
         enc_state_dict = constructor_params["encoder"]["state_dict"]

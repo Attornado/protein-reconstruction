@@ -269,3 +269,13 @@ class DiffPool(GraphClassifier):
         f1 = f1_score(preds=y_hat, target=y, task='multiclass', num_classes=n_classes, average="macro")
 
         return float(loss), float(acc), top_k_acc, prec, rec, f1
+
+
+class DiffPoolEmbedding(DiffPool):
+    """Custom DiffPool class to change default parameters in DiffPool forward()"""
+    def __init__(self, dim_features, dim_target, config):
+        super().__init__(dim_features, dim_target, config)
+
+    def forward(self, x, edge_index, batch, apply_first_linear: bool = True, apply_second_linear: bool = False):
+        return super().forward(x, edge_index, batch, apply_first_linear=apply_first_linear,
+                               apply_second_linear=apply_second_linear)

@@ -31,7 +31,7 @@ WARM_UP_EPOCHS: final = 80
 WEIGHT_DECAY: final = 0
 OPTIMIZER: final = "adam"
 EARLY_STOPPING_PATIENCE: final = 35
-EXPERIMENT_NAME: final = 'paired_protmotionnet_test12'
+EXPERIMENT_NAME: final = 'paired_protmotionnet_test13'
 EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "classification", "paired_protmotionnet")
 RESTORE_CHECKPOINT: final = True
 USE_CLASS_WEIGHTS: final = True
@@ -82,13 +82,13 @@ def main():
     conf_count = 0
 
     grid_values = {
-        'dropout': [0.1, 0.5],
-        "model_name": ["hier_rev"],  # had GCN, GAT, SAGE, "diff_pool", "gunet", "grunet", "sage_c", "hier_rev"
-        'embedding_dim': [64, 128, 256],  # [32, 64, 128, 256]
+        'dropout': [0.0, 0.1],
+        "model_name": ["diff_pool"],  # had GCN, GAT, SAGE, "diff_pool", "gunet", "grunet", "sage_c", "hier_rev"
+        'embedding_dim': [50, 100],  # [32, 64, 128, 256]
         'n_heads_gat': [8],  # [8]
         "dense_num": [1, 2],  # [2, 3]
-        "n_layers": [3, 4],  # [1, 5, 20, 50, 100]
-        "learning_rate": [0.001, 0.0001, 0.00001]  # [0.0001, 0.00001, 0.000001]
+        "n_layers": [3, 5],  # [1, 5, 20, 50, 100]
+        "learning_rate": [0.00001, 0.000001]  # [0.0001, 0.00001, 0.000001]
     }
 
     for m in grid_values['model_name']:
@@ -329,7 +329,7 @@ def main():
                                         criterion=loss_fn,
                                         logger=logger,
                                         scheduler=scheduler,
-                                        monitor_metric=VAL_LOSS_METRIC
+                                        monitor_metric=ACCURACY_METRIC
                                     )
 
                                     if best_model_acc < metrics['accuracy']:

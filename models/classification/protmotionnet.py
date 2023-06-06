@@ -16,7 +16,7 @@ from models.batch_utils import generate_batch_cross_attention_mask_v2
 from models.layers import PositionWiseFeedForward
 # from models.batch_utils import generate_batch_cross_attention_mask, from_dense_batch
 from models.classification.classifiers import GraphClassifier, MulticlassClassificationLoss, ClassificationLoss
-from models.classification.diffpool import DiffPool, DiffPoolMulticlassClassificationLoss
+from models.classification.diffpool import DiffPoolMulticlassClassificationLoss, DiffPoolEmbedding
 from models.layers import SerializableModule
 from functools import partial
 from preprocessing.dataset.paired_dataset import PairedDataLoader
@@ -513,7 +513,7 @@ class TransformerPairedProtMotionNet(PairedProtMotionNet):
                                                        enable_nested_tensor=True)
 
         self.__num_heads_transformer = num_heads
-        self.__d_ff: Optional[int] = d_ffcon
+        self.__d_ff: Optional[int] = d_ff
         self.__pre_norm: bool = pre_norm
         self.__ff_activation: str = ff_activation
         self.__n_blocks: int = n_blocks
@@ -595,16 +595,6 @@ class TransformerPairedProtMotionNet(PairedProtMotionNet):
         return x
 
 
-class _DiffPoolEmbedding(DiffPool):
-    """Custom DiffPool class to change default parameters in DiffPool forward()"""
-    def __init__(self, dim_features, dim_target, config):
-        super().__init__(dim_features, dim_target, config)
-
-    def forward(self, x, edge_index, batch, apply_first_linear: bool = True, apply_second_linear: bool = False):
-        return super().forward(x, edge_index, batch, apply_first_linear=apply_first_linear,
-                               apply_second_linear=apply_second_linear)
-
-
 class DiffPoolPairedProtMotionNet(PairedProtMotionNet):
     def __init__(self,
                  diff_pool_config: dict,
@@ -613,7 +603,7 @@ class DiffPoolPairedProtMotionNet(PairedProtMotionNet):
                  dense_activations: list[str],
                  dim_features: int,
                  dropout: float = 0.0):
-        encoder = _DiffPoolEmbedding(dim_features=dim_features, dim_target=dense_units[-1], config=diff_pool_config)
+        encoder = DiffPoolEmbedding(dim_features=dim_features, dim_target=dense_units[-1], config=diff_pool_config)
         super().__init__(encoder=encoder, encoder_out_channels=encoder_out_channels*2, dense_units=dense_units,
                          dense_activations=dense_activations, dim_features=dim_features, dropout=dropout, num_heads=1)
         self.__diff_pool_config = diff_pool_config

@@ -3,24 +3,26 @@ from typing import final
 import torch
 from torch_geometric.loader import DataLoader
 from models.classification.sage import SAGEClassifier
-from models.layers import GCNConvBlock
-from preprocessing.constants import PRETRAIN_CLEANED_TRAIN, PRETRAIN_CLEANED_VAL, DATA_PATH
+from models.layers import GCNConvBlock, GATConvBlock
+from preprocessing.constants import PRETRAIN_CLEANED_TRAIN, PRETRAIN_CLEANED_VAL, DATA_PATH, RANDOM_SEED
 from models.pretraining.vgae import VGAEv2, train_vgae, VGEncoder
-from models.pretraining.encoders import RevGCNEncoder
+from models.pretraining.encoders import RevGCNEncoder, RevGATConvEncoder
 from preprocessing.dataset.dataset_creation import load_dataset
 from torch.optim import Adam, Adadelta
 import torchinfo
+from training.training_tools import seed_everything
 
 
 BATCH_SIZE: final = 160
 EPOCHS: final = 250
 EARLY_STOPPING_PATIENCE: final = 30
-EXPERIMENT_NAME: final = 'vgae_rev_gcn_test18'
+EXPERIMENT_NAME: final = 'vgae_rev_gcn_test19'
 EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "pretraining", "vgae")
 RESTORE_CHECKPOINT: final = True
 
 
 def main():
+    seed_everything(seed=RANDOM_SEED)
     ds_train = load_dataset(PRETRAIN_CLEANED_TRAIN, dataset_type="pretrain")
     ds_val = load_dataset(PRETRAIN_CLEANED_VAL, dataset_type="pretrain")
     # ds_test = load_dataset(PRETRAIN_CLEANED_TEST, dataset_type="pretrain")
@@ -128,14 +130,31 @@ def main():
     )
     """
 
-    emb_dim = 256
-    n_layers = 3
-    encoder_mu = SAGEClassifier(dim_features=in_channels,
+    emb_dim = 128
+    n_layers = 60
+
+    encoder = RevGATConvEncoder(
+        in_channels=in_channels,
+        hidden_channels=emb_dim,
+        out_channels=emb_dim,
+        num_convs=n_layers,
+        dropout=0.1,
+        heads=5,
+        concat=False,
+        num_groups=2  # was 10, remember to change to 5 on the next experiment (14)
+    )
+    encoder_mu = GATConvBlock(
+        in_channels=emb_dim,
+        out_channels=emb_dim,
+        heads=5,
+        concat=True
+    )
+    '''encoder_mu = SAGEClassifier(dim_features=in_channels,
                                 dim_target=7,
                                 config={"dim_embedding": emb_dim,
                                         "num_layers": n_layers,
                                         "return_embeddings": True,
-                                        'aggregation': 'mean'})
+                                        'aggregation': 'mean'})'''
 
     '''encoder_mu = GCNConvBlock(
         in_channels=emb_dim,
@@ -143,7 +162,7 @@ def main():
         improved=True
     )'''
 
-    vgencoder = VGEncoder(shared_encoder=None, encoder_mu=encoder_mu)
+    vgencoder = VGEncoder(shared_encoder=encoder, encoder_mu=encoder_mu)
     vgae = VGAEv2(encoder=vgencoder)
 
     full_experiment_path = os.path.join(EXPERIMENT_PATH, EXPERIMENT_NAME)
@@ -161,7 +180,7 @@ def main():
         print("State dict loaded.")
 
     print(vgae)
-    print(torchinfo.summary(vgae, depth=5))
+    print(torchinfo.summary(vgae, depth=6))
 
     # optimizer = Adam(vgae.parameters(), lr=0.1, weight_decay=5e-4)
     optimizer = Adadelta(vgae.parameters())
@@ -174,7 +193,7 @@ def main():
         experiment_path=EXPERIMENT_PATH,
         experiment_name=EXPERIMENT_NAME,
         early_stopping_patience=EARLY_STOPPING_PATIENCE,
-        forward_batch=True
+        forward_batch=False
     )
 
     full_experiment_path = os.path.join(EXPERIMENT_PATH, EXPERIMENT_NAME)
