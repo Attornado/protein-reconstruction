@@ -201,7 +201,9 @@ class VGAEv2(VGAE, SerializableModule):
                                 *args, **kwargs):
 
         # Get encoder constructor params/state dict and construct it
-        enc_state_dict = constructor_params["encoder"]["state_dict"]
+        enc_state_dict = None
+        if "state_dict" in constructor_params["encoder"]:
+            enc_state_dict = constructor_params["encoder"]["state_dict"]
         enc_constructor_params = constructor_params["encoder"]["constructor_params"]
         encoder = vgencoder_constructor.from_constructor_params(
             enc_constructor_params,
@@ -209,7 +211,8 @@ class VGAEv2(VGAE, SerializableModule):
             encoder_logstd_constructor=encoder_logstd_constructor,
             shared_encoder_constructor=shared_encoder_constructor
         )  # construct vgencoder
-        encoder.load_state_dict(state_dict=enc_state_dict)  # set weights
+        if "state_dict" in constructor_params["encoder"]:
+            encoder.load_state_dict(state_dict=enc_state_dict)  # set weights
 
         # If required, get decoder constructor params/state dict and construct it
         decoder = None

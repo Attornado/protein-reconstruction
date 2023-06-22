@@ -691,7 +691,7 @@ def create_dataset_pretrain(pdb_paths: List[str],
     columns = list(NODE_METADATA_FUNCTIONS.keys()) + list(GRAPH_METADATA_FUNCTIONS.keys())
 
     if "add_modes" in GRAPH_METADATA_FUNCTIONS:
-        columns.extend([NM_EIGENVECTORS, NM_EIGENVECTORS])
+        columns.extend([NM_EIGENVALUES])
 
     if conversion_verbosity == "gnn":
         columns.extend([
@@ -890,6 +890,13 @@ class NodeFeatureFormatter(BaseTransform):
         for feature_col in self.feature_columns:
             sample[feature_col] = torch.Tensor(sample[feature_col])  # convert to tensor
             sample["x"] = torch.cat([sample["x"], sample[feature_col]], dim=-1)  # combine node features
+
+        if NM_EIGENVALUES in sample and len(sample[NM_EIGENVALUES].shape) > 1:
+            sample[NM_EIGENVALUES] = sample[NM_EIGENVALUES][0]  # get only one copy not one for each node
+
+        # Handle distance matrix, converting it to numpy array
+        if "dist_mat" in sample:
+            sample["dist_mat"] = sample["dist_mat"].detach().cpu().numpy()
 
         # Add renamed y column if required
         if "graph_y" in sample:

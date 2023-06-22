@@ -4,7 +4,7 @@ import torch
 from torch.optim import Adadelta, Adam
 from torch_geometric.loader import DataLoader
 from torchinfo import torchinfo
-from models.pretraining.encoders import RevGCNEncoder
+from models.pretraining.encoders import RevGCNEncoder, RevGATConvEncoder
 from models.pretraining.graph_infomax import DeepGraphInfomaxV2, train_DGI, MeanPoolReadout, \
     RandomPermutationCorruption
 from models.classification.sage import SAGEClassifier
@@ -12,10 +12,10 @@ from preprocessing.constants import PRETRAIN_CLEANED_TRAIN, PRETRAIN_CLEANED_VAL
 from preprocessing.dataset.dataset_creation import load_dataset
 
 
-BATCH_SIZE: final = 350
+BATCH_SIZE: final = 300
 EPOCHS: final = 150
 EARLY_STOPPING_PATIENCE: final = 20
-EXPERIMENT_NAME: final = 'dgi_rev_gcn_test19'
+EXPERIMENT_NAME: final = 'dgi_rev_gat_test0'
 EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "pretraining", "dgi")
 RESTORE_CHECKPOINT: final = True
 
@@ -25,8 +25,8 @@ def main():
     ds_val = load_dataset(PRETRAIN_CLEANED_VAL, dataset_type="pretrain")
     # ds_test = load_dataset(PRETRAIN_CLEANED_TEST, dataset_type="pretrain")
 
-    dl_train = DataLoader(ds_train, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
-    dl_val = DataLoader(ds_val, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
+    dl_train = DataLoader(ds_train, batch_size=BATCH_SIZE, shuffle=True)
+    dl_val = DataLoader(ds_val, batch_size=BATCH_SIZE, shuffle=True)
     # dl_test = DataLoader(ds_test, batch_size=BATCH_SIZE, shuffle=True)
 
     # dl_train_corruption = DataLoader(ds_train, batch_size=BATCH_SIZE, shuffle=True)
@@ -115,27 +115,40 @@ def main():
         normalize_hidden=True
     )'''
 
-    emb_dim = 256
+    '''emb_dim = 256
     n_layers = 3
     encoder = SAGEClassifier(dim_features=in_channels,
                              dim_target=7,
                              config={"dim_embedding": emb_dim,
                                      "num_layers": n_layers,
                                      "return_embeddings": True,
-                                     'aggregation': 'mean'})
+                                     'aggregation': 'mean'})'''
+    emb_dim = 128
+    n_layers = 60
+
+    encoder = RevGATConvEncoder(
+        in_channels=in_channels,
+        hidden_channels=emb_dim,
+        out_channels=emb_dim,
+        num_convs=n_layers,
+        dropout=0.4,
+        heads=5,
+        concat=False,
+        num_groups=2  # was 10, remember to change to 5 on the next experiment (14)
+    )
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     readout = MeanPoolReadout(device=device, sigmoid=False)
     # corruption = RandomSampleCorruption(train_data=dl_train_corruption, val_data=dl_val_corruption, device=device)
     corruption = RandomPermutationCorruption(device=device, return_batch=True)
     dgi = DeepGraphInfomaxV2(
-        hidden_channels=emb_dim*n_layers,  # was 100
+        hidden_channels=emb_dim,  # was 100
         encoder=encoder,
         normalize_hidden=True,
         readout=readout,
         corruption=corruption,
         dropout=0.4,
-        forward_batch=True
+        forward_batch=False
     )
 
     print(dgi)

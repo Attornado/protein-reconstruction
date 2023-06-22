@@ -1,3 +1,4 @@
+import argparse
 import os
 import shutil
 from typing import final
@@ -27,9 +28,9 @@ __RECREATE_ENZYMES: final = True
 __RECREATE_FOLD: final = True
 
 
-def main():
+def main(args):
 
-    if __RECREATE_PSCDB:
+    if args.recreate_pscdb:
         # Read raw data
         df = pscdb_read(path=PSCDB_PATH, drop_duplicate_pdb_codes=True)
         df2 = df.iloc[0:-1]
@@ -51,7 +52,7 @@ def main():
         )
 
         # Integrate the "other_motion" proteins from the original format dataset
-        if __INTEGRATE_OTHER_TYPE_PROTEINS:
+        if args.integrate_missing_proteins:
             df_train = pd.concat([df_train, df_train_other_motion])
             df_val = pd.concat([df_val, df_val_other_motion])
             df_test = pd.concat([df_test, df_test_other_motion])
@@ -61,7 +62,7 @@ def main():
             pdb_paths,
             val_size=VAL_SIZE_PRETRAIN,
             test_size=TEST_SIZE_PRETRAIN,
-            random_seed=RANDOM_SEED
+            random_seed=args.seed
         )
 
         # Get the PDB paths of the PSCDB train/validation/test proteins
@@ -85,7 +86,8 @@ def main():
 
         # Copy PSCDB PDB files to AlphaFold directory, otherwise pre-train dataset creation won't work cuz:
         # "Graphein cool!"
-        copy_all_pscdb_files = input("Copy all PSCDB .pdb files to alphafold directory (0: no, 1: yes)? ")
+        # copy_all_pscdb_files = input("Copy all PSCDB .pdb files to alphafold directory (0: no, 1: yes)? ")
+        copy_all_pscdb_files = args.copy_all_pscdb_files
         if int(copy_all_pscdb_files) != 0:
             shutil.copytree(src=os.path.join(PSCDB_CLEANED_TRAIN, PSCDB_PDBS_SUFFIX), dst=PATH_PDBS_DIR,
                             dirs_exist_ok=True)
@@ -95,7 +97,7 @@ def main():
                             dirs_exist_ok=True)
 
         # Create pre-training datasets
-        if __RECREATE_PRETRAINING:
+        if args.recreate_pretraining:
             ds_pt_train = create_dataset_pretrain(
                 pdb_paths=pdb_paths_train,
                 export_path=PRETRAIN_CLEANED_TRAIN,
@@ -303,7 +305,7 @@ def main():
         print(f"Loaded class weights {class_weights}")
 
         # Load the dataset and create the data loader to check if everything's ok
-        if __RECREATE_PRETRAINING:
+        if args.recreate_pretraining:
             ds2 = load_dataset(PRETRAIN_CLEANED_TRAIN, dataset_type="pretrain")
             print(len(ds2))
             dl = DataLoader(ds2, batch_size=2, shuffle=True, drop_last=True)
@@ -317,7 +319,7 @@ def main():
         dl = PairedDataLoader(ds3, batch_size=2, shuffle=False, drop_last=True)
         print(next(iter(dl)))
 
-    if __RECREATE_ENZYMES:
+    if args.recreate_enzymes:
         # Read raw data
         df = pd.read_csv(ENZYMES_CLASSIFICATION_CSV, index_col=False)
         df2 = df.iloc[0:-1]
@@ -413,7 +415,7 @@ def main():
         class_weights = torch.load(ENZYMES_CLASS_WEIGHTS)
         print(f"Loaded class weights {class_weights}")
 
-    if __RECREATE_FOLD:
+    if args.recreate_fold:
         # Read raw data
         df = pd.read_csv(FOLD_CLASSIFICATION_CSV, index_col=False)
         df2 = df.iloc[0:-1]
@@ -512,4 +514,18 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--seed', type=int, default=RANDOM_SEED,
+                        help='the integer value seed for global random state in Lightning')
+    parser.add_argument('--integrate_missing_proteins', type=bool, default=__INTEGRATE_OTHER_TYPE_PROTEINS,
+                        help='add missing proteins to PSCDB')
+    parser.add_argument('--recreate_pscdb', type=bool, default=__RECREATE_PSCDB, help='recreate the PSCDB dataset')
+    parser.add_argument('--recreate_pretraining', type=bool, default=__RECREATE_PRETRAINING,
+                        help='recreate the pretrain dataset')
+    parser.add_argument('--recreate_enzymes', type=bool, default=__RECREATE_ENZYMES, help='recreate ENZYMES dataset')
+    parser.add_argument('--recreate_fold', type=bool, default=__RECREATE_FOLD,
+                        help='recreate the fold classification dataset')
+    parser.add_argument('--copy_all_pscdb_files', type=int, default=0, choices=[0, 1],
+                        help='copy all PSCDB PDB files into pretraining data directory')
+    arguments = parser.parse_args()
+    main(args=arguments)
