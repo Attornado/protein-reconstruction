@@ -4,20 +4,19 @@ import random
 import argparse
 from typing import final
 import torch
+from torch.nn import MSELoss
 from torch.optim.lr_scheduler import LambdaLR
 from log.logger import Logger
 from torch_geometric.loader import ImbalancedSampler, DynamicBatchSampler
 from models.classification.classifiers import MulticlassClassificationLoss
-from models.classification.diffpool import DiffPool, DiffPoolMulticlassClassificationLoss
+from models.classification.diffpool import DiffPoolMulticlassClassificationLoss
 from models.classification.protmotionnet import PairedProtMotionNet, train_paired_classifier, \
     DiffPoolPairedProtMotionNet
 from models.classification.sage import SAGEClassifier
 from models.layers import GATConvBlock, GCNConvBlock, SAGEConvBlock
-from models.pretraining.encoders import RevGCNEncoder, RevGATConvEncoder, RevSAGEConvEncoder, ResGCN2ConvEncoderV2
+from models.pretraining.encoders import RevGCNEncoder, RevGATConvEncoder, RevSAGEConvEncoder
 from models.pretraining.graph_infomax import DeepGraphInfomaxV2, MeanPoolReadout, RandomPermutationCorruption
-from models.pretraining.gunet import GraphRevUNet, GraphUNetV2, HierarchicalTopKRevEncoder
-from models.classification.ugformer import GCN, GAT, SAGE
-from models.pretraining.normal_modes import EigenValueNMNet
+from models.pretraining.normal_modes import EigenValueNMNet, DIFF_POOL, SAGE, GUNET, train_nm_net
 from models.pretraining.vgae import VGAEv2, VGEncoder
 from preprocessing.constants import PSCDB_CLEANED_TRAIN, PSCDB_CLEANED_VAL, DATA_PATH, \
     PSCDB_CLASS_WEIGHTS, PSCDB_PAIRED_CLASS_WEIGHTS, PSCDB_PAIRED_CLEANED_TRAIN, PSCDB_PAIRED_CLEANED_VAL, \
@@ -35,9 +34,8 @@ WARM_UP_EPOCHS: final = 80
 WEIGHT_DECAY: final = 0
 OPTIMIZER: final = "adam"
 EARLY_STOPPING_PATIENCE: final = 35
-EXPERIMENT_NAME: final = 'paired_protmotionnet_test3'
-EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "classification", "pretrained_paired_protmotionnet")
-PRE_TRAINED_MODEL_PATH: final = os.path.join(DATA_PATH, "fitted", "pretraining", "vgae", "vgae_rev_gcn_test18")
+EXPERIMENT_NAME: final = 'normal_mode_test0'
+EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "pretraining", "normal_modes")
 RESTORE_CHECKPOINT: final = True
 USE_CLASS_WEIGHTS: final = True
 USE_UNBALANCED_SAMPLER: final = False
@@ -49,8 +47,6 @@ CONF_COUNT_START: final = 0
 MODEL_NAME: final = "diff_pool"  # had GCN, GAT, SAGE, "diff_pool", "gunet", "grunet", "sage_c", "hier_rev"
 MODEL_NAMES: final = frozenset([RevGATConvEncoder.MODEL_TYPE, RevSAGEConvEncoder.MODEL_TYPE, RevGCNEncoder.MODEL_TYPE,
                                 "diff_pool", "gunet", "grunet", "sage_c", "hier_rev"])
-PRE_TRAINED_MODEL_NAME: final = "vgae"
-PRE_TRAINED_MODEL_NAMES: final = frozenset(["vgae", "dgi", "normal_mode"])
 MONITORED_METRIC: final = VAL_LOSS_METRIC
 
 
@@ -84,8 +80,8 @@ def main(args):
     optim = args.optimizer
 
     try:
-        path = os.path.join(args.experiment_path, args.experiment_name, "best_acc.pt")
-        best_model_acc = torch.load(path)["best_acc"]
+        path = os.path.join(args.experiment_path, args.experiment_name, "best_mse.pt")
+        best_model_acc = torch.load(path)["best_mse"]
     except FileNotFoundError:
         best_model_acc = -1
 
@@ -93,116 +89,14 @@ def main(args):
     conf_count = 0
 
     grid_values = {
-        'dropout': [0.0, 0.3, 0.5],
+        'dropout': [0.1, 0.3, 0.5],
         "dense_num": [1, 2],  # [2, 3]
-        "learning_rate": [0.001, 0.0001, 0.00001, 0.000001]  # [0.0001, 0.00001, 0.000001]
+        "learning_rate": [0.001, 0.0001, 0.00001]  # [0.0001, 0.00001, 0.000001]
     }
 
     m = args.model_name  # model type
-    pretrained_model_type = args.pretrained_model_name
-
-    # Load params and weights
-    constructor_params = torch.load(os.path.join(args.pretrained_model_path, "constructor_params.pt"))
-    try:
-        state_dict = torch.load(os.path.join(args.pretrained_model_path, "state_dict.pt"))
-    except FileNotFoundError:
-        state_dict = torch.load(os.path.join(args.pretrained_model_path, "state_dict.pt"))
-
-    # VGAE
-    emb = None
-    encoder = None
-    if pretrained_model_type == "vgae":
-        constructor_params_copy = dict(**constructor_params)
-        del constructor_params_copy["encoder"]["state_dict"]
-        print(f"Loaded constructor params: {constructor_params_copy}")
-        del constructor_params_copy
-        vgae = None
-        if m == "sage_c":
-            vgae = VGAEv2.from_constructor_params(
-                constructor_params=constructor_params,
-                vgencoder_constructor=VGEncoder,
-                encoder_mu_constructor=SAGEClassifier
-            )
-            emb = vgae.encoder._encoder_mu.config_dict["dim_embedding"]*vgae.encoder._encoder_mu.config_dict["num_layers"]
-            # nl = vgae.encoder._encoder_mu.config["num_layers"]
-        elif m == RevGATConvEncoder.MODEL_TYPE:
-            vgae = VGAEv2.from_constructor_params(
-                constructor_params=constructor_params,
-                vgencoder_constructor=VGEncoder,
-                shared_encoder_constructor=RevGATConvEncoder,
-                encoder_mu_constructor=GATConvBlock
-            )
-            emb = vgae.encoder._shared_encoder.out_channels
-        elif m == RevGCNEncoder.MODEL_TYPE:
-            vgae = VGAEv2.from_constructor_params(
-                constructor_params=constructor_params,
-                vgencoder_constructor=VGEncoder,
-                shared_encoder_constructor=RevGCNEncoder,
-                encoder_mu_constructor=GCNConvBlock
-            )
-            emb = vgae.encoder._shared_encoder.out_channels
-        elif m == RevSAGEConvEncoder.MODEL_TYPE:
-            vgae = VGAEv2.from_constructor_params(
-                constructor_params=constructor_params,
-                vgencoder_constructor=VGEncoder,
-                shared_encoder_constructor=RevSAGEConvEncoder,
-                encoder_mu_constructor=SAGEConvBlock
-            )
-            emb = vgae.encoder._shared_encoder.out_channels
-        vgae.load_state_dict(state_dict)
-        encoder = vgae.encoder
-        encoder.standalone = True  # return only encoder mu
-
-    # DGI
-    if pretrained_model_type == "dgi":
-        constructor_params_copy = dict(**constructor_params)
-        del constructor_params_copy["encoder"]["state_dict"]
-        print(f"Loaded constructor params: {constructor_params_copy}")
-        del constructor_params_copy
-
-        dgi = None
-        if m == "sage_c":
-            dgi = DeepGraphInfomaxV2.from_constructor_params(
-                constructor_params=constructor_params,
-                encoder_constructor=SAGEClassifier,
-                readout=MeanPoolReadout,
-                corruption=RandomPermutationCorruption,
-            )
-            emb = dgi.encoder.config["dim_embedding"]*dgi.encoder.config["num_layers"]
-            nl = dgi.encoder.config["num_layers"]
-        elif m == RevGATConvEncoder.MODEL_TYPE:
-            dgi = DeepGraphInfomaxV2.from_constructor_params(
-                constructor_params=constructor_params,
-                encoder_constructor=RevGATConvEncoder,
-                readout=MeanPoolReadout,
-                corruption=RandomPermutationCorruption,
-            )
-            emb = dgi.encoder.out_channels
-        elif m == RevGCNEncoder.MODEL_TYPE:
-            dgi = DeepGraphInfomaxV2.from_constructor_params(
-                constructor_params=constructor_params,
-                encoder_constructor=RevGCNEncoder,
-                readout=MeanPoolReadout,
-                corruption=RandomPermutationCorruption,
-            )
-            emb = dgi.encoder.out_channels
-        elif m == RevSAGEConvEncoder.MODEL_TYPE:
-            dgi = DeepGraphInfomaxV2.from_constructor_params(
-                constructor_params=constructor_params,
-                encoder_constructor=RevSAGEConvEncoder,
-                readout=MeanPoolReadout,
-                corruption=RandomPermutationCorruption,
-            )
-            emb = dgi.encoder.out_channels
-        dgi.load_state_dict(state_dict)
-        encoder = dgi.encoder
-
-    evnmnet = None
-    if pretrained_model_type == "normal_mode":
-        print("Loaded constructor params: ", constructor_params)
-        evnmnet = EigenValueNMNet.from_constructor_params(constructor_params=constructor_params)
-        evnmnet.load_state_dict(state_dict)
-        encoder = evnmnet._encoder
+    emb = args.embedding_dim
+    nl = args.num_layers
 
     for dn in grid_values['dense_num']:
         for d in grid_values['dropout']:
@@ -233,34 +127,65 @@ def main(args):
                         dense_units = [emb, int(emb/2), n_classes]
                         dense_activations = ["gelu", "gelu", "linear"]
 
-                    if m == "diff_pool" and pretrained_model_type == "normal_mode":
-                        diff_pool_config = evnmnet.encoder_params
-                        model = DiffPoolPairedProtMotionNet(
-                            diff_pool_config=diff_pool_config,
+                    if m == "diff_pool":
+                        model = EigenValueNMNet(
+                            in_channels=in_channels,
                             encoder_out_channels=emb,
                             dense_units=dense_units,
                             dense_activations=dense_activations,
-                            dim_features=in_channels,
-                            dropout=d
+                            encoder_type=DIFF_POOL,
+                            dropout=d,
+                            **{'num_layers': nl,
+                               'dim_embedding': 256,
+                               'gnn_dim_hidden': 128,
+                               'dim_embedding_MLP': emb,
+                               'max_num_nodes': 3787}
                         )
-                        model._encoder.load_state_dict(encoder.state_dict())  # load pre-trained DiffPool weights
-                    else:
-                        encoder_out_channels = emb
-                        forward_batch_index = False
-                        if m == "grunet" or m == "gunet" or m == "sage_c" or m == "hier_rev":
-                            forward_batch_index = True
-                        model = PairedProtMotionNet(
-                            encoder=encoder,
-                            encoder_out_channels=encoder_out_channels,
+                        # Model with lr 1e-05 and config {'encoder_out_channels': 200, 'dense_units': [100, 7],
+                        # 'dense_activations': ['gelu', 'linear'], 'dropout': 0.1, 'forward_batch_index': False,
+                        # 'dim_features': 10, 'use_ff': False, 'diff_pool_config': {'num_layers': 3,
+                        # 'dim_embedding': 256, 'gnn_dim_hidden': 128, 'dim_embedding_MLP': 100, 'max_num_nodes': 3787}}
+                    elif m == "sage_c":
+                        model = EigenValueNMNet(
+                            in_channels=in_channels,
+                            encoder_out_channels=emb,
                             dense_units=dense_units,
                             dense_activations=dense_activations,
-                            dim_features=in_channels,
-                            dropout=d,
-                            readout=random.choice(["max_pool"]),
-                            num_heads=2,  # try 2
-                            forward_batch_index=forward_batch_index,
-                            use_ff=True
+                            encoder_type=SAGE,
+                            dropout=d,  # should be 0.0/0.1
+                            **{"num_layers": nl,  # should be 3/
+                               "aggregation": "mean",  # can be "mean" or "max"
+                               "dim_embedding": emb,  # should be 256
+                               "return_embeddings": True}
                         )
+                        # Model with lr 1e-05 and config {'dropout': 0.0, 'model_name': 'sage_c', 'n_layers': 3,
+                        # 'embedding_dim': 256, 'dense_num': 2, 'learning_rate': 1e-05}
+                    else:
+                        if nl == 3:
+                            pool_ratios = [0.9, 0.7, 0.6]
+                        elif nl == 4:
+                            pool_ratios = [0.9, 0.7, 0.6, 0.5]
+                        elif nl == 5:
+                            pool_ratios = [0.9, 0.8, 0.7, 0.6, 0.5]
+                        else:
+                            pool_ratios = 0.7
+                        model = EigenValueNMNet(
+                            in_channels=in_channels,
+                            encoder_out_channels=emb,  # should be 128
+                            dense_units=dense_units,
+                            dense_activations=dense_activations,
+                            encoder_type=GUNET,
+                            dropout=d,  # should be 0.3/0.5
+                            **{"depth": nl,  # should be 4
+                               "pool_ratios": pool_ratios,
+                               "sum_res": False}
+                        )
+                        # Model with lr 1e-05 and config {'encoder_out_channels': 128, 'dense_units': [7],
+                        # 'dense_activations': ['linear'], 'dropout': 0.5, 'readout': 'max_pool',
+                        # 'forward_batch_index': True, 'dim_features': 10, 'encoder': {
+                        # 'constructor_params': {'in_channels': 10, 'hidden_channels': 128, 'out_channels': 128,
+                        # 'depth': 4, 'pool_ratios': [0.9, 0.7, 0.6, 0.5], 'sum_res': False, 'act': 'relu'}},
+                        # 'num_heads': 2, 'vdim': None, 'kdim': None, 'use_ff': True}
 
                     l2 = args.weight_decay
                     scheduler = None
@@ -276,9 +201,9 @@ def main(args):
                         # warm_up + cosine weight decay
                         lr_plan = \
                             lambda cur_epoch: (cur_epoch + 1) / args.warm_up_epochs \
-                            if cur_epoch < args.warm_up_epochs else \
-                            (0.5 * (1.0 + math.cos(math.pi * (cur_epoch - args.warm_up_epochs) /
-                                                   (args.epochs - args.warm_up_epochs))))
+                                if cur_epoch < args.warm_up_epochs else \
+                                (0.5 * (1.0 + math.cos(math.pi * (cur_epoch - args.warm_up_epochs) /
+                                                       (args.epochs - args.warm_up_epochs))))
                         scheduler = LambdaLR(optimizer, lr_lambda=lr_plan)
                     else:
                         optimizer = Adadelta(model.parameters())
@@ -306,29 +231,17 @@ def main(args):
                                                         f"n_{conf_count}")
                     logger = Logger(filepath=os.path.join(full_experiment_path, "trainlog.txt"),
                                     mode="a")
-                    if not args.use_class_weights:
-                        class_weights = None
-                        # set class weights to None if not use class weights is selected
-                    else:
-                        class_weights = class_weights.to(
-                            torch.device("cuda") if torch.cuda.is_available() else
-                            torch.device("cpu")
-                        )
-                    loss_fn = MulticlassClassificationLoss(weights=class_weights,
-                                                           label_smoothing=args.label_smoothing)
                     if m == "diff_pool":
-                        loss_fn = DiffPoolMulticlassClassificationLoss(weights=class_weights,
-                                                                       label_smoothing=args.label_smoothing)
                         config = model.serialize_constructor_params()
-                    if m == "gunet" or m == "grunet":
+                    if m == "gunet" or m == "sage_c":
                         config = model.serialize_constructor_params()
                         del config["encoder"]["state_dict"]
-                    logger.log(f"Launching training for experiment PairedProtMotionNet n{conf_count} "
+                    logger.log(f"Launching training for experiment EigenValueNMNet n{conf_count} "
                                f"with config \n {config} with learning rate "
                                f"{lr}, \n stored in "
                                f"{full_experiment_path}...")
 
-                    model, metrics = train_paired_classifier(
+                    model, metrics = train_nm_net(
                         model,
                         train_data=dl_train,
                         val_data=dl_val,
@@ -337,10 +250,10 @@ def main(args):
                         experiment_path=EXPERIMENT_PATH,
                         experiment_name=os.path.join(args.experiment_name, f"n_{conf_count}"),
                         early_stopping_patience=args.patience,
-                        criterion=loss_fn,
+                        criterion=MSELoss(),
                         logger=logger,
                         scheduler=scheduler,
-                        monitor_metric=args.monitor_metric
+                        monitored_metric=args.monitor_metric
                     )
 
                     if best_model_acc < metrics['accuracy']:
@@ -348,7 +261,7 @@ def main(args):
                         logger = Logger(filepath=os.path.join(full_experiment_path, "trainlog.txt"),
                                         mode="a")
                         logger.log(f"Found better model n{conf_count} than {best_model_acc} acc, "
-                                   f"with accuracy "
+                                   f"with mse "
                                    f"{metrics['accuracy']} acc, saving it in best dir")
                         best_model_acc = metrics['accuracy']
                         constructor_params = model.serialize_constructor_params()
@@ -372,8 +285,8 @@ if __name__ == '__main__':
     # Model's arguments
     parser.add_argument('--model_name', type=str, default=MODEL_NAME,
                         help=f"the model type (must be one of {MODEL_NAMES})")
-    parser.add_argument('--pretrained_model_name', type=str, default=PRE_TRAINED_MODEL_NAME,
-                        help=f"the pretrained model name (must be one of {PRE_TRAINED_MODEL_NAMES})")
+    parser.add_argument('--embedding_dim', type=int, default=100, help=f"the embedding size")
+    parser.add_argument('--num_layers', type=int, default=5, help=f"the number of layers")
     parser.add_argument('--in_channels', type=int, default=IN_CHANNELS, help="model input channels")
     parser.add_argument('--conf_count_start', type=int, default=CONF_COUNT_START,
                         help="the start grid search configuration")
@@ -391,8 +304,6 @@ if __name__ == '__main__':
     parser.add_argument('--epochs', type=int, default=EPOCHS, help="the maximum number of epochs")
     parser.add_argument('--restore_checkpoint', type=bool, default=RESTORE_CHECKPOINT,
                         help="whether to restore old checkpoint to resume training")
-    parser.add_argument('--pretrained_model_path', type=str, default=PRE_TRAINED_MODEL_PATH,
-                        help='path to pre-trained model')
     parser.add_argument('--experiment_path', type=str, default=EXPERIMENT_PATH,
                         help='directory to save the experiments')
     parser.add_argument('--experiment_name', type=str, default=EXPERIMENT_NAME, help='experiment name')

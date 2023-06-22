@@ -337,7 +337,7 @@ class DeepGraphInfomaxV2(DeepGraphInfomax, SerializableModule):
                                 constructor_params: dict,
                                 encoder_constructor: Type[SerializableModule],
                                 readout: Callable,
-                                corruption: Type[CorruptionFunction],
+                                corruption: CorruptionFunction,
                                 *args, **kwargs):
         # Get encoder constructor params/state dict and construct it
         enc_state_dict = constructor_params["encoder"]["state_dict"]
@@ -495,14 +495,15 @@ def train_step_DGI(model: DeepGraphInfomaxV2, train_data: DataLoader, optimizer,
 
         # Encoder output
         if use_edge_weight and use_edge_attr:
-            pos_z, neg_z, summary = model(data.x, data.edge_index, batch=data.batch, edge_attr=data.edge_attr,
+            pos_z, neg_z, summary = model(data.float(), data.edge_index, batch=data.batch, edge_attr=data.edge_attr,
                                           edge_weight=data.edge_weight)
         elif use_edge_attr:
-            pos_z, neg_z, summary = model(data.x, data.edge_index, batch=data.batch, edge_attr=data.edge_attr)
+            pos_z, neg_z, summary = model(data.x.float(), data.edge_index, batch=data.batch, edge_attr=data.edge_attr)
         elif use_edge_weight:
-            pos_z, neg_z, summary = model(data.x, data.edge_index, batch=data.batch, edge_weight=data.edge_weight)
+            pos_z, neg_z, summary = model(data.x.float(), data.edge_index, batch=data.batch,
+                                          edge_weight=data.edge_weight)
         else:
-            pos_z, neg_z, summary = model(data.x, data.edge_index, batch=data.batch)
+            pos_z, neg_z, summary = model(data.x.float(), data.edge_index, batch=data.batch)
 
         loss = model.loss(pos_z, neg_z, summary)
 
@@ -539,17 +540,18 @@ def test_step_DGI(model: DeepGraphInfomaxV2, val_data: DataLoader, device, use_e
 
         # Encoder output
         if use_edge_weight and use_edge_attr:
-            pos_z, neg_z, summary = model(data.x, data.edge_index, batch=data.batch, edge_attr=data.edge_attr,
+            pos_z, neg_z, summary = model(data.x.float(), data.edge_index, batch=data.batch, edge_attr=data.edge_attr,
                                           edge_weight=data.edge_weight)
         elif use_edge_attr:
-            pos_z, neg_z, summary = model(data.x, data.edge_index, batch=data.batch, edge_attr=data.edge_attr)
+            pos_z, neg_z, summary = model(data.x.float(), data.edge_index, batch=data.batch, edge_attr=data.edge_attr)
         elif use_edge_weight:
-            pos_z, neg_z, summary = model(data.x, data.edge_index, batch=data.batch, edge_weight=data.edge_weight)
+            pos_z, neg_z, summary = model(data.x.float(), data.edge_index, batch=data.batch,
+                                          edge_weight=data.edge_weight)
         else:
-            pos_z, neg_z, summary = model(data.x, data.edge_index, batch=data.batch)
+            pos_z, neg_z, summary = model(data.x.float(), data.edge_index, batch=data.batch)
 
         loss = model.loss(pos_z, neg_z, summary)
-        precision, recall, accuracy, f1 = model.test_discriminator(data.x, data.edge_index,
+        precision, recall, accuracy, f1 = model.test_discriminator(data.x.float(), data.edge_index,
                                                                    batch=data.batch, threshold=threshold)
 
         running_val_loss = running_val_loss + 1 / steps * (loss.item() - running_val_loss)

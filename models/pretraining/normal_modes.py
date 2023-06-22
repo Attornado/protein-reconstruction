@@ -116,7 +116,7 @@ class EigenValueNMNet(SerializableModule):
         self._dense_layers = torch.nn.ModuleList()
         prev_units = encoder_out_channels
         dense_units.append(n_eigenvalues)
-        for i in range(0, len(dense_units)):
+        for i in range(0, len(dense_activations)):
 
             # Check if activations
             if dense_activations[i] not in self._ACTIVATIONS:
@@ -415,8 +415,9 @@ def train_nm_net(model: EigenValueNMNet,
                  early_stopping_delta: float = 0,
                  logger: Optional[Logger] = None,
                  criterion=MSELoss(),
-                 metrics=frozenset([MAE, MAPE, PEARSON, CONCORDANCE]),
+                 metrics=frozenset([LOSS, MAE, MAPE, PEARSON, CONCORDANCE]),
                  monitored_metric: str = LOSS,
+                 scheduler=None,
                  use_tensorboard_log: bool = False) -> (torch.nn.Module, dict):
     # TODO: test this
     assert monitored_metric in metrics
@@ -491,6 +492,9 @@ def train_nm_net(model: EigenValueNMNet,
             criterion=criterion,
             logger=None  # do not log epoch statistics to file
         )
+
+        if scheduler is not None:
+            scheduler.step()
 
         # Do validation step
         epoch_metrics = test_step_nm_net(
