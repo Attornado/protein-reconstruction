@@ -340,10 +340,11 @@ class DeepGraphInfomaxV2(DeepGraphInfomax, SerializableModule):
                                 corruption: CorruptionFunction,
                                 *args, **kwargs):
         # Get encoder constructor params/state dict and construct it
-        enc_state_dict = constructor_params["encoder"]["state_dict"]
         enc_constructor_params = constructor_params["encoder"]["constructor_params"]
         encoder = encoder_constructor.from_constructor_params(enc_constructor_params)  # construct encoder
-        encoder.load_state_dict(state_dict=enc_state_dict)  # set weights
+        if "state_dict" in constructor_params["encoder"]:
+            enc_state_dict = constructor_params["encoder"]["state_dict"]
+            encoder.load_state_dict(state_dict=enc_state_dict)  # set weights
 
         # Get other params
         hidden_channels = constructor_params["hidden_channels"]

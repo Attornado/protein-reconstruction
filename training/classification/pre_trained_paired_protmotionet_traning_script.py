@@ -35,9 +35,9 @@ WARM_UP_EPOCHS: final = 80
 WEIGHT_DECAY: final = 0
 OPTIMIZER: final = "adam"
 EARLY_STOPPING_PATIENCE: final = 35
-EXPERIMENT_NAME: final = 'paired_protmotionnet_test3'
+EXPERIMENT_NAME: final = 'paired_protmotionnet_test6'
 EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "classification", "pretrained_paired_protmotionnet")
-PRE_TRAINED_MODEL_PATH: final = os.path.join(DATA_PATH, "fitted", "pretraining", "vgae", "vgae_rev_gcn_test18")
+PRE_TRAINED_MODEL_PATH: final = os.path.join(DATA_PATH, "fitted", "pretraining", "dgi", "dgi_gunet_gat_test0")
 RESTORE_CHECKPOINT: final = True
 USE_CLASS_WEIGHTS: final = True
 USE_UNBALANCED_SAMPLER: final = False
@@ -46,10 +46,10 @@ DYNAMIC_BATCH_SIZE: final = 24000
 LABEL_SMOOTHING: final = 0.1
 IN_CHANNELS: final = 10
 CONF_COUNT_START: final = 0
-MODEL_NAME: final = "diff_pool"  # had GCN, GAT, SAGE, "diff_pool", "gunet", "grunet", "sage_c", "hier_rev"
+MODEL_NAME: final = "gunet"  # had GCN, GAT, SAGE, "diff_pool", "gunet", "grunet", "sage_c", "hier_rev"
 MODEL_NAMES: final = frozenset([RevGATConvEncoder.MODEL_TYPE, RevSAGEConvEncoder.MODEL_TYPE, RevGCNEncoder.MODEL_TYPE,
                                 "diff_pool", "gunet", "grunet", "sage_c", "hier_rev"])
-PRE_TRAINED_MODEL_NAME: final = "vgae"
+PRE_TRAINED_MODEL_NAME: final = "dgi"
 PRE_TRAINED_MODEL_NAMES: final = frozenset(["vgae", "dgi", "normal_mode"])
 MONITORED_METRIC: final = VAL_LOSS_METRIC
 
@@ -100,6 +100,8 @@ def main(args):
 
     m = args.model_name  # model type
     pretrained_model_type = args.pretrained_model_name
+    print(args.pretrained_model_name)
+    print(m)
 
     # Load params and weights
     constructor_params = torch.load(os.path.join(args.pretrained_model_path, "constructor_params.pt"))
@@ -107,7 +109,7 @@ def main(args):
         state_dict = torch.load(os.path.join(args.pretrained_model_path, "state_dict.pt"))
     except FileNotFoundError:
         state_dict = torch.load(os.path.join(args.pretrained_model_path, "state_dict.pt"))
-
+    print(pretrained_model_type)
     # VGAE
     emb = None
     encoder = None
@@ -166,7 +168,7 @@ def main(args):
                 constructor_params=constructor_params,
                 encoder_constructor=SAGEClassifier,
                 readout=MeanPoolReadout,
-                corruption=RandomPermutationCorruption,
+                corruption=RandomPermutationCorruption(device=torch.device("cuda" if torch.cuda.is_available() else "cpu")),
             )
             emb = dgi.encoder.config["dim_embedding"]*dgi.encoder.config["num_layers"]
             nl = dgi.encoder.config["num_layers"]
@@ -175,7 +177,9 @@ def main(args):
                 constructor_params=constructor_params,
                 encoder_constructor=RevGATConvEncoder,
                 readout=MeanPoolReadout,
-                corruption=RandomPermutationCorruption,
+                corruption=RandomPermutationCorruption(
+                    device=torch.device("cuda" if torch.cuda.is_available() else "cpu")
+                ),
             )
             emb = dgi.encoder.out_channels
         elif m == RevGCNEncoder.MODEL_TYPE:
@@ -183,7 +187,9 @@ def main(args):
                 constructor_params=constructor_params,
                 encoder_constructor=RevGCNEncoder,
                 readout=MeanPoolReadout,
-                corruption=RandomPermutationCorruption,
+                corruption=RandomPermutationCorruption(
+                    device=torch.device("cuda" if torch.cuda.is_available() else "cpu")
+                ),
             )
             emb = dgi.encoder.out_channels
         elif m == RevSAGEConvEncoder.MODEL_TYPE:
@@ -191,7 +197,19 @@ def main(args):
                 constructor_params=constructor_params,
                 encoder_constructor=RevSAGEConvEncoder,
                 readout=MeanPoolReadout,
-                corruption=RandomPermutationCorruption,
+                corruption=RandomPermutationCorruption(
+                    device=torch.device("cuda" if torch.cuda.is_available() else "cpu")
+                ),
+            )
+            emb = dgi.encoder.out_channels
+        elif m == "gunet":
+            dgi = DeepGraphInfomaxV2.from_constructor_params(
+                constructor_params=constructor_params,
+                encoder_constructor=GraphUNetV2,
+                readout=MeanPoolReadout,
+                corruption=RandomPermutationCorruption(
+                    device=torch.device("cuda" if torch.cuda.is_available() else "cpu")
+                ),
             )
             emb = dgi.encoder.out_channels
         dgi.load_state_dict(state_dict)

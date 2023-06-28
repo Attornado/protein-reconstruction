@@ -1,47 +1,34 @@
 import math
 import os
-import random
 import argparse
 from typing import final
 import torch
 from torch.nn import MSELoss
 from torch.optim.lr_scheduler import LambdaLR
 from log.logger import Logger
-from torch_geometric.loader import ImbalancedSampler, DynamicBatchSampler
-from models.classification.classifiers import MulticlassClassificationLoss
-from models.classification.diffpool import DiffPoolMulticlassClassificationLoss
-from models.classification.protmotionnet import PairedProtMotionNet, train_paired_classifier, \
-    DiffPoolPairedProtMotionNet
+from torch_geometric.loader import DynamicBatchSampler, DataLoader
 from models.classification.sage import SAGEClassifier
 from models.layers import GATConvBlock, GCNConvBlock, SAGEConvBlock
 from models.pretraining.encoders import RevGCNEncoder, RevGATConvEncoder, RevSAGEConvEncoder
-from models.pretraining.graph_infomax import DeepGraphInfomaxV2, MeanPoolReadout, RandomPermutationCorruption
-from models.pretraining.normal_modes import EigenValueNMNet, DIFF_POOL, SAGE, GUNET, train_nm_net
-from models.pretraining.vgae import VGAEv2, VGEncoder
-from preprocessing.constants import PSCDB_CLEANED_TRAIN, PSCDB_CLEANED_VAL, DATA_PATH, \
-    PSCDB_CLASS_WEIGHTS, PSCDB_PAIRED_CLASS_WEIGHTS, PSCDB_PAIRED_CLEANED_TRAIN, PSCDB_PAIRED_CLEANED_VAL, \
-    PSCDB_PAIRED_CLEANED_TEST, RANDOM_SEED
+from models.pretraining.normal_modes import EigenValueNMNet, DIFF_POOL, SAGE, GUNET, train_nm_net, N_EIGENVALUES_DEFAULT
+from preprocessing.constants import DATA_PATH, RANDOM_SEED, PRETRAIN_CLEANED_TRAIN, PRETRAIN_CLEANED_VAL
 from preprocessing.dataset.dataset_creation import load_dataset
 from torch.optim import Adam, Adadelta
 import torchinfo
-from preprocessing.dataset.paired_dataset import PairedDataLoader
 from training.training_tools import ACCURACY_METRIC, VAL_LOSS_METRIC, seed_everything
 
 
 BATCH_SIZE: final = 10
-EPOCHS: final = 1000
-WARM_UP_EPOCHS: final = 80
-WEIGHT_DECAY: final = 0
-OPTIMIZER: final = "adam"
-EARLY_STOPPING_PATIENCE: final = 35
-EXPERIMENT_NAME: final = 'normal_mode_test0'
+EPOCHS: final = 100
+WARM_UP_EPOCHS: final = 30
+WEIGHT_DECAY: final = 0  # try 1e-5
+OPTIMIZER: final = "adamw"
+EARLY_STOPPING_PATIENCE: final = 15
+EXPERIMENT_NAME: final = 'normal_mode_diff_pool_test0'
 EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "pretraining", "normal_modes")
 RESTORE_CHECKPOINT: final = True
-USE_CLASS_WEIGHTS: final = True
-USE_UNBALANCED_SAMPLER: final = False
 USE_DYNAMIC_BATCH: final = True
-DYNAMIC_BATCH_SIZE: final = 24000
-LABEL_SMOOTHING: final = 0.1
+DYNAMIC_BATCH_SIZE: final = 18000
 IN_CHANNELS: final = 10
 CONF_COUNT_START: final = 0
 MODEL_NAME: final = "diff_pool"  # had GCN, GAT, SAGE, "diff_pool", "gunet", "grunet", "sage_c", "hier_rev"
@@ -52,31 +39,24 @@ MONITORED_METRIC: final = VAL_LOSS_METRIC
 
 def main(args):
     seed_everything(args.seed)
-    ds_train = load_dataset(PSCDB_PAIRED_CLEANED_TRAIN, dataset_type="pscdb_paired")
-    ds_val = load_dataset(PSCDB_PAIRED_CLEANED_VAL, dataset_type="pscdb_paired")
+    ds_train = load_dataset(PRETRAIN_CLEANED_TRAIN, dataset_type="pretrain")
+    ds_val = load_dataset(PRETRAIN_CLEANED_VAL, dataset_type="pretrain")
     # ds_test = load_dataset(PSCDB_CLEANED_TEST, dataset_type="pscdb")
 
-    ys_train = torch.stack([data.y for data in ds_train], dim=0).view(-1)
-    ys_val = torch.stack([data.y for data in ds_val], dim=0).view(-1)
+    # ys_train = torch.stack([data.y for data in ds_train], dim=0).view(-1)
+    # ys_val = torch.stack([data.y for data in ds_val], dim=0).view(-1)
 
-    if args.use_unbalanced_sampler:
-        sampler = ImbalancedSampler(dataset=ys_train, num_samples=int(len(ds_train)*1.5))
-        sampler2 = ImbalancedSampler(dataset=ys_val, num_samples=int(len(ds_val)*3))
-        dl_train = PairedDataLoader(ds_train, batch_size=args.batch_size, shuffle=False, sampler=sampler)
-        dl_val = PairedDataLoader(ds_val, batch_size=args.batch_size, shuffle=False, sampler=sampler2)
-    elif args.use_dynamic_batch:
+    if args.use_dynamic_batch:
         sampler = DynamicBatchSampler(ds_train, max_num=args.dynamic_batch_size)
         sampler2 = DynamicBatchSampler(ds_val, max_num=args.dynamic_batch_size)
-        dl_train = PairedDataLoader(ds_train, batch_sampler=sampler, shuffle=False)
-        dl_val = PairedDataLoader(ds_val, batch_sampler=sampler2, shuffle=False)
+        dl_train = DataLoader(ds_train, batch_sampler=sampler, shuffle=False)
+        dl_val = DataLoader(ds_val, batch_sampler=sampler2, shuffle=False)
     else:
-        dl_train = PairedDataLoader(ds_train, batch_size=args.batch_size, shuffle=True)
-        dl_val = PairedDataLoader(ds_val, batch_size=args.batch_size, shuffle=True)
+        dl_train = DataLoader(ds_train, batch_size=args.batch_size, shuffle=True)
+        dl_val = DataLoader(ds_val, batch_size=args.batch_size, shuffle=True)
     # dl_test = DataLoader(ds_test, batch_size=BATCH_SIZE, shuffle=True)
 
-    class_weights = torch.load(PSCDB_PAIRED_CLASS_WEIGHTS)
     in_channels = args.in_channels
-    n_classes = len(class_weights)
     optim = args.optimizer
 
     try:
@@ -118,14 +98,14 @@ def main(args):
                     dense_units = None
                     dense_activations = None
                     if dn == 1:
-                        dense_units = [n_classes]
-                        dense_activations = ["linear"]
+                        dense_units = []
+                        dense_activations = []
                     elif dn == 2:
-                        dense_units = [emb, n_classes]
-                        dense_activations = ["gelu", "linear"]
+                        dense_units = [emb]
+                        dense_activations = ["gelu"]
                     elif dn == 3:
-                        dense_units = [emb, int(emb/2), n_classes]
-                        dense_activations = ["gelu", "gelu", "linear"]
+                        dense_units = [emb, int(emb/2)]
+                        dense_activations = ["gelu", "gelu"]
 
                     if m == "diff_pool":
                         model = EigenValueNMNet(
@@ -134,6 +114,7 @@ def main(args):
                             dense_units=dense_units,
                             dense_activations=dense_activations,
                             encoder_type=DIFF_POOL,
+                            n_eigenvalues=N_EIGENVALUES_DEFAULT,
                             dropout=d,
                             **{'num_layers': nl,
                                'dim_embedding': 256,
@@ -200,10 +181,10 @@ def main(args):
                                                       weight_decay=l2)
                         # warm_up + cosine weight decay
                         lr_plan = \
-                            lambda cur_epoch: (cur_epoch + 1) / args.warm_up_epochs \
-                                if cur_epoch < args.warm_up_epochs else \
-                                (0.5 * (1.0 + math.cos(math.pi * (cur_epoch - args.warm_up_epochs) /
-                                                       (args.epochs - args.warm_up_epochs))))
+                            lambda cur_epoch: (cur_epoch + 1) / args.warm_up_steps \
+                                if cur_epoch < args.warm_up_steps else \
+                                (0.5 * (1.0 + math.cos(math.pi * (cur_epoch - args.warm_up_steps) /
+                                                       (args.epochs - args.warm_up_steps))))
                         scheduler = LambdaLR(optimizer, lr_lambda=lr_plan)
                     else:
                         optimizer = Adadelta(model.parameters())
@@ -292,13 +273,10 @@ if __name__ == '__main__':
                         help="the start grid search configuration")
     parser.add_argument('--optimizer', type=str, default=OPTIMIZER,
                         help="the optimizer to use (either 'adam', 'adamw' or 'adadelta'")
-    parser.add_argument('--warmup_steps', type=int, default=WARM_UP_EPOCHS,
+    parser.add_argument('--warm_up_steps', type=int, default=WARM_UP_EPOCHS,
                         help="the warmup epochs if using learning rate scheduler (AdamW optimizer)")
     parser.add_argument('--weight_decay', type=float, default=WEIGHT_DECAY,
                         help="the weight decay rate or L2 regularization term (AdamW/Adam optimizer)")
-    parser.add_argument('--label_smoothing', type=float, default=LABEL_SMOOTHING, help="the label smoothing term")
-    parser.add_argument('--use_class_weights', type=bool, default=USE_CLASS_WEIGHTS,
-                        help="whether to use class weights to handle unbalanced classes")
 
     # Training and checkpointing arguments
     parser.add_argument('--epochs', type=int, default=EPOCHS, help="the maximum number of epochs")
@@ -314,8 +292,6 @@ if __name__ == '__main__':
     # Datamodule's arguments
     parser.add_argument('--use_dynamic_batch', type=bool, default=USE_DYNAMIC_BATCH,
                         help='whether to use dynamic batching')
-    parser.add_argument('--use_unbalanced_sampler', type=bool, default=USE_UNBALANCED_SAMPLER,
-                        help='whether to use unbalanced sampling in the data loader (no dynamic batch supported)')
     parser.add_argument('--batch_size', type=int, default=BATCH_SIZE, help='size of the batch (if using static batch)')
     parser.add_argument('--dynamic_batch_size', type=int, default=DYNAMIC_BATCH_SIZE,
                         help='size of the batch (if using dynamic batch)')
