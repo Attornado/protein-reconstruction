@@ -9,6 +9,7 @@ from torch_geometric.nn.dense import Linear
 from torch_geometric.nn.aggr import MeanAggregation, MaxAggregation, SumAggregation, LSTMAggregation, SoftmaxAggregation
 from torchmetrics.functional import mean_absolute_percentage_error, mean_absolute_error, mean_squared_error, \
     pearson_corrcoef, concordance_corrcoef
+import einops
 from log.logger import Logger
 from models.layers import SerializableModule
 import torch.nn.functional as F
@@ -18,7 +19,7 @@ from models.pretraining.gunet import GraphUNetV2
 from preprocessing.utils import FrozenDict
 from training.training_tools import FIGURE_SIZE_DEFAULT, EarlyStopping, MetricsHistoryTracer, EARLY_STOP_PATIENCE, \
     VAL_LOSS_METRIC
-from preprocessing.dataset.dataset_creation import NM_EIGENVECTORS, NM_EIGENVALUES
+from preprocessing.dataset.dataset_creation import NM_EIGENVALUES
 
 
 DIFF_POOL: final = "diff_pool"
@@ -28,16 +29,18 @@ ENCODER_TYPES: final = frozenset([DIFF_POOL, SAGE, GUNET])
 N_EIGENVALUES_DEFAULT: final = 6
 LOSS: final = VAL_LOSS_METRIC
 MSE: final = "mse"
+RMSE: final = "rmse"
 MAE: final = "mae"
 MAPE: final = "mape"
 PEARSON: final = "pearson"
 CONCORDANCE: final = "concordance"
 METRICS_DICT: final = FrozenDict({
     MSE: mean_squared_error,
+    RMSE: lambda preds, target: torch.sqrt(mean_squared_error(preds=preds, target=target)),
     MAE: mean_absolute_error,
     MAPE: mean_absolute_percentage_error,
-    PEARSON: pearson_corrcoef,
-    CONCORDANCE: concordance_corrcoef
+    PEARSON: lambda preds, target: pearson_corrcoef(preds=preds, target=target).mean(),
+    CONCORDANCE: lambda preds, target: concordance_corrcoef(preds=preds, target=target).mean()
 })
 
 
@@ -77,7 +80,7 @@ class EigenValueNMNet(SerializableModule):
                  dense_activations: list[str],
                  encoder_type: str = SAGE,
                  dropout: float = 0.0,
-                 readout: str = 'mean_pool',
+                 readout: str = 'mean_pool',  # no effect if encoder type is "diff_pool"
                  n_eigenvalues: int = N_EIGENVALUES_DEFAULT,
                  **encoder_params):
 
@@ -116,6 +119,7 @@ class EigenValueNMNet(SerializableModule):
         self._dense_layers = torch.nn.ModuleList()
         prev_units = encoder_out_channels
         dense_units.append(n_eigenvalues)
+        dense_activations.append("linear")
         for i in range(0, len(dense_activations)):
 
             # Check if activations
@@ -225,11 +229,12 @@ class EigenValueNMNet(SerializableModule):
         # Extract features with encoder
         lpl, el = 0, 0
         if self.encoder_type == DIFF_POOL:
-            x, lpl, el = self._encoder.get_embeddings(x, edge_index, batch_index, *args, **kwargs)
+            x, lpl, el = self._encoder(x, edge_index, batch_index, *args, **kwargs)
         else:
             x = self._encoder(x, edge_index, batch_index, *args, **kwargs)
 
-        x = self._readout_aggregation(x, index=batch_index)
+        if self.encoder_type != DIFF_POOL:
+            x = self._readout_aggregation(x, index=batch_index)
 
         x = self._apply_dense_layers(x)
 
@@ -283,7 +288,7 @@ class EigenValueNMNet(SerializableModule):
              edge_index: Optional[torch.Tensor] = None,
              batch_index: Optional[torch.Tensor] = None,
              criterion: Callable = MSELoss(),
-             metrics: Iterable[str] = frozenset([MAE, MAPE, PEARSON, CONCORDANCE])) -> dict[str, float]:
+             metrics: Iterable[str] = frozenset([MAE, MAPE, RMSE])) -> dict[str, float]:
         if eigenvalues_pred is None and (x is None or edge_index is None):
             raise ValueError("Either eigenvalues_pred or x and edge_index must be given.")
 
@@ -293,14 +298,14 @@ class EigenValueNMNet(SerializableModule):
         eigenvalues_pred_tmp = None
         # Get DiffPool additional loss terms
         if self.encoder_type == DIFF_POOL:
-            eigenvalues_pred_tmp, lpl, el = self(x=x, edge_index=edge_index, batch_index=batch_index)
+            eigenvalues_pred_tmp, lpl, el = self(x=x.float(), edge_index=edge_index, batch_index=batch_index)
 
         # Get predictions if not given
         if eigenvalues_pred is None:
             if self.encoder_type == DIFF_POOL:
                 eigenvalues_pred = eigenvalues_pred_tmp
             else:
-                eigenvalues_pred = self(x=x, edge_index=edge_index, batch_index=batch_index)
+                eigenvalues_pred = self(x=x.float(), edge_index=edge_index, batch_index=batch_index)
 
         # Compute MSE loss
         loss = criterion(eigenvalues_pred, eigenvalues_true)
@@ -315,8 +320,9 @@ class EigenValueNMNet(SerializableModule):
         # Compute metrics
         metric_values = {}
         for metric in metrics:
-            metric_fn = METRICS_DICT[metric]
-            metric_values[metric] = metric_fn(preds=eigenvalues_pred, target=eigenvalues_pred)
+            if metric != LOSS:
+                metric_fn = METRICS_DICT[metric]
+                metric_values[metric] = metric_fn(preds=eigenvalues_pred, target=eigenvalues_true)
         metric_values[LOSS] = loss
 
         return metric_values
@@ -326,7 +332,7 @@ def train_step_nm_net(model: EigenValueNMNet,
                       train_data: DataLoader,
                       optimizer,
                       device: torch.device,
-                      criterion=MSELoss(),
+                      criterion: Callable = MSELoss(),
                       logger: Optional[Logger] = None):
     # Put the model in training mode
     model.train()
@@ -338,8 +344,8 @@ def train_step_nm_net(model: EigenValueNMNet,
     for data in iter(train_data):
         # Reset the optimizer gradients
         optimizer.zero_grad()
-
-        loss = model.loss(eigenvalues_true=data[NM_EIGENVALUES].to(device),
+        data[NM_EIGENVALUES] = einops.rearrange(data[NM_EIGENVALUES], "(b f) -> b f", f=model.n_eigenvalues)
+        loss = model.loss(eigenvalues_true=data[NM_EIGENVALUES].float().to(device),
                           x=data.x.float().to(device),
                           edge_index=data.edge_index.to(device),
                           batch_index=data.batch.to(device),
@@ -374,7 +380,7 @@ def train_step_nm_net(model: EigenValueNMNet,
 def test_step_nm_net(model: EigenValueNMNet,
                      val_data: DataLoader,
                      device: torch.device,
-                     criterion=MSELoss(),
+                     criterion: Callable = MSELoss(),
                      metrics=frozenset([MAE, MAPE, PEARSON, CONCORDANCE])) -> dict[str, float]:
     # TODO: test this
     # put the model in evaluation mode
@@ -387,7 +393,8 @@ def test_step_nm_net(model: EigenValueNMNet,
     for data in iter(val_data):
         # move batch to device
         # data = data.to(device)
-        metric_values = model.test(eigenvalues_true=data[NM_EIGENVALUES].to(device),
+        data[NM_EIGENVALUES] = einops.rearrange(data[NM_EIGENVALUES], "(b f) -> b f", f=model.n_eigenvalues)
+        metric_values = model.test(eigenvalues_true=data[NM_EIGENVALUES].float().to(device),
                                    x=data.x.float().to(device),
                                    edge_index=data.edge_index.to(device),
                                    batch_index=data.batch.to(device),
@@ -414,12 +421,11 @@ def train_nm_net(model: EigenValueNMNet,
                  early_stopping_patience: int = EARLY_STOP_PATIENCE,
                  early_stopping_delta: float = 0,
                  logger: Optional[Logger] = None,
-                 criterion=MSELoss(),
-                 metrics=frozenset([LOSS, MAE, MAPE, PEARSON, CONCORDANCE]),
+                 criterion: Callable = MSELoss(),
+                 metrics=frozenset([LOSS, RMSE, MAE, MAPE]),
                  monitored_metric: str = LOSS,
                  scheduler=None,
                  use_tensorboard_log: bool = False) -> (torch.nn.Module, dict):
-    # TODO: test this
     assert monitored_metric in metrics
 
     # Move model to device
@@ -467,6 +473,8 @@ def train_nm_net(model: EigenValueNMNet,
     log_string = 'Epoch: {:d},'.format(0)
     for metric in epoch_metrics:
         metric_value = epoch_metrics[metric]
+        if isinstance(metric_value, torch.Tensor):
+            metric_value = metric_value.detach().cpu()
         log_string += f" {metric} {metric_value},"
     if logger is None:
         print(log_string)
@@ -477,10 +485,12 @@ def train_nm_net(model: EigenValueNMNet,
     if use_tensorboard_log:
         for metric in epoch_metrics:
             metric_value = epoch_metrics[metric]
+            if isinstance(metric_value, torch.Tensor):
+                metric_value = metric_value.detach().cpu()
             writer.add_scalar(metric, metric_value, 0)
 
     # Check for early-stopping stuff
-    monitor(monitored_metric, model)
+    monitor(epoch_metrics[monitored_metric], model)
 
     for epoch in range(0, epochs):
         # Do train step
@@ -510,6 +520,8 @@ def train_nm_net(model: EigenValueNMNet,
         log_string = 'Epoch: {:d}, Train loss: {:.4f},'.format(epoch + 1, train_loss)
         for metric in epoch_metrics:
             metric_value = epoch_metrics[metric]
+            if isinstance(metric_value, torch.Tensor):
+                metric_value = metric_value.detach().cpu()
             log_string += f" {metric} {metric_value},"
         if logger is None:
             print(log_string)
@@ -521,10 +533,12 @@ def train_nm_net(model: EigenValueNMNet,
             writer.add_scalar('train_loss', train_loss, epoch)
             for metric in epoch_metrics:
                 metric_value = epoch_metrics[metric]
+                if isinstance(metric_value, torch.Tensor):
+                    metric_value = metric_value.detach().cpu()
                 writer.add_scalar(metric, metric_value, epoch)
 
         # Check for early-stopping stuff
-        monitor(monitored_metric, model)
+        monitor(epoch_metrics[monitored_metric], model)
         if monitor.early_stop:
             if logger is None:
                 print(f"Epoch {epoch}: early stopping, restoring model checkpoint {checkpoint_path}...")
@@ -536,6 +550,8 @@ def train_nm_net(model: EigenValueNMNet,
         mht.add_scalar('train_loss', train_loss)
         for metric in epoch_metrics:
             metric_value = epoch_metrics[metric]
+            if isinstance(metric_value, torch.Tensor):
+                metric_value = metric_value.detach().cpu()
             mht.add_scalar(metric, metric_value)
 
     # Plot the metrics

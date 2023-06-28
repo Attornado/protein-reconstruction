@@ -8,14 +8,15 @@ from models.pretraining.encoders import RevGCNEncoder, RevGATConvEncoder
 from models.pretraining.graph_infomax import DeepGraphInfomaxV2, train_DGI, MeanPoolReadout, \
     RandomPermutationCorruption
 from models.classification.sage import SAGEClassifier
+from models.pretraining.gunet import GraphUNetV2
 from preprocessing.constants import PRETRAIN_CLEANED_TRAIN, PRETRAIN_CLEANED_VAL, DATA_PATH
 from preprocessing.dataset.dataset_creation import load_dataset
 
 
-BATCH_SIZE: final = 300
+BATCH_SIZE: final = 200
 EPOCHS: final = 150
 EARLY_STOPPING_PATIENCE: final = 20
-EXPERIMENT_NAME: final = 'dgi_rev_gat_test0'
+EXPERIMENT_NAME: final = 'dgi_gunet_gat_test0'
 EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "pretraining", "dgi")
 RESTORE_CHECKPOINT: final = True
 
@@ -122,10 +123,10 @@ def main():
                              config={"dim_embedding": emb_dim,
                                      "num_layers": n_layers,
                                      "return_embeddings": True,
-                                     'aggregation': 'mean'})'''
+                                     'aggregation': 'mean'})
     emb_dim = 128
     n_layers = 60
-
+    
     encoder = RevGATConvEncoder(
         in_channels=in_channels,
         hidden_channels=emb_dim,
@@ -135,6 +136,16 @@ def main():
         heads=5,
         concat=False,
         num_groups=2  # was 10, remember to change to 5 on the next experiment (14)
+    )'''
+    n_layers = 4
+    emb_dim = 128
+    encoder = GraphUNetV2(
+        in_channels=in_channels,
+        hidden_channels=emb_dim,
+        out_channels=emb_dim,
+        depth=n_layers,
+        pool_ratios=[0.9, 0.7, 0.6, 0.5],
+        sum_res=False
     )
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
