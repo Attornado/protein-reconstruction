@@ -30,14 +30,15 @@ from training.training_tools import ACCURACY_METRIC, VAL_LOSS_METRIC, seed_every
 
 
 BATCH_SIZE: final = 10
-EPOCHS: final = 1000
-WARM_UP_EPOCHS: final = 80
+EPOCHS: final = 500
+WARM_UP_EPOCHS: final = 20
 WEIGHT_DECAY: final = 0
-OPTIMIZER: final = "adam"
+OPTIMIZER: final = "adamw"
 EARLY_STOPPING_PATIENCE: final = 35
-EXPERIMENT_NAME: final = 'paired_protmotionnet_test6'
+EXPERIMENT_NAME: final = 'paired_protmotionnet_test9'
 EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "classification", "pretrained_paired_protmotionnet")
-PRE_TRAINED_MODEL_PATH: final = os.path.join(DATA_PATH, "fitted", "pretraining", "dgi", "dgi_gunet_gat_test0")
+PRE_TRAINED_MODEL_PATH: final = os.path.join(DATA_PATH, "fitted", "pretraining", "normal_modes",
+                                             "normal_mode_rev_gat_test0")
 RESTORE_CHECKPOINT: final = True
 USE_CLASS_WEIGHTS: final = True
 USE_UNBALANCED_SAMPLER: final = False
@@ -45,13 +46,13 @@ USE_DYNAMIC_BATCH: final = True
 DYNAMIC_BATCH_SIZE: final = 24000
 LABEL_SMOOTHING: final = 0.1
 IN_CHANNELS: final = 10
-CONF_COUNT_START: final = 0
-MODEL_NAME: final = "gunet"  # had GCN, GAT, SAGE, "diff_pool", "gunet", "grunet", "sage_c", "hier_rev"
+CONF_COUNT_START: final = 1
+MODEL_NAME: final = "rev_gat"  # had GCN, GAT, SAGE, "diff_pool", "gunet", "grunet", "sage_c", "hier_rev"
 MODEL_NAMES: final = frozenset([RevGATConvEncoder.MODEL_TYPE, RevSAGEConvEncoder.MODEL_TYPE, RevGCNEncoder.MODEL_TYPE,
                                 "diff_pool", "gunet", "grunet", "sage_c", "hier_rev"])
-PRE_TRAINED_MODEL_NAME: final = "dgi"
+PRE_TRAINED_MODEL_NAME: final = "normal_mode"
 PRE_TRAINED_MODEL_NAMES: final = frozenset(["vgae", "dgi", "normal_mode"])
-MONITORED_METRIC: final = VAL_LOSS_METRIC
+MONITORED_METRIC: final = ACCURACY_METRIC  # VAL_LOSS_METRIC
 
 
 def main(args):
@@ -95,7 +96,7 @@ def main(args):
     grid_values = {
         'dropout': [0.0, 0.3, 0.5],
         "dense_num": [1, 2],  # [2, 3]
-        "learning_rate": [0.001, 0.0001, 0.00001, 0.000001]  # [0.0001, 0.00001, 0.000001]
+        "learning_rate": [0.001, 0.0001, 1e-5]  # [0.001, 0.0001, 0.00001, 0.000001]  # [0.0001, 0.00001, 0.000001]
     }
 
     m = args.model_name  # model type
@@ -108,7 +109,7 @@ def main(args):
     try:
         state_dict = torch.load(os.path.join(args.pretrained_model_path, "state_dict.pt"))
     except FileNotFoundError:
-        state_dict = torch.load(os.path.join(args.pretrained_model_path, "state_dict.pt"))
+        state_dict = torch.load(os.path.join(args.pretrained_model_path, "checkpoint.pt"))
     print(pretrained_model_type)
     # VGAE
     emb = None
@@ -218,8 +219,16 @@ def main(args):
     evnmnet = None
     if pretrained_model_type == "normal_mode":
         print("Loaded constructor params: ", constructor_params)
+        if "dropout" in constructor_params:
+            del constructor_params["dropout"]
         evnmnet = EigenValueNMNet.from_constructor_params(constructor_params=constructor_params)
-        evnmnet.load_state_dict(state_dict)
+        print(f"Loading state dict from {os.path.join(args.pretrained_model_path, 'state_dict.pt')}")
+        emb = evnmnet.encoder_out_channels
+        try:
+            state_dict = torch.load(os.path.join(args.pretrained_model_path, "state_dict.pt"))
+        except FileNotFoundError:
+            state_dict = torch.load(os.path.join(args.pretrained_model_path, "checkpoint.pt"))
+        evnmnet.load_state_dict(state_dict, strict=False)
         encoder = evnmnet._encoder
 
     for dn in grid_values['dense_num']:
@@ -261,12 +270,17 @@ def main(args):
                             dim_features=in_channels,
                             dropout=d
                         )
-                        model._encoder.load_state_dict(encoder.state_dict())  # load pre-trained DiffPool weights
+                        encoder_state_dict = encoder.state_dict()
+                        del encoder_state_dict['lin2.weight']
+                        del encoder_state_dict['lin2.bias']
+                        model._encoder.load_state_dict(encoder_state_dict, strict=False)  # load pre-trained DiffPool weights
                     else:
                         encoder_out_channels = emb
                         forward_batch_index = False
                         if m == "grunet" or m == "gunet" or m == "sage_c" or m == "hier_rev":
                             forward_batch_index = True
+                        if pretrained_model_type == "normal_mode" and hasattr(encoder, 'dropout'):
+                            encoder.dropout = d
                         model = PairedProtMotionNet(
                             encoder=encoder,
                             encoder_out_channels=encoder_out_channels,
@@ -345,7 +359,7 @@ def main(args):
                                f"with config \n {config} with learning rate "
                                f"{lr}, \n stored in "
                                f"{full_experiment_path}...")
-
+                    print(args.monitor_metric)
                     model, metrics = train_paired_classifier(
                         model,
                         train_data=dl_train,
@@ -397,7 +411,7 @@ if __name__ == '__main__':
                         help="the start grid search configuration")
     parser.add_argument('--optimizer', type=str, default=OPTIMIZER,
                         help="the optimizer to use (either 'adam', 'adamw' or 'adadelta'")
-    parser.add_argument('--warmup_steps', type=int, default=WARM_UP_EPOCHS,
+    parser.add_argument('--warm_up_epochs', type=int, default=WARM_UP_EPOCHS,
                         help="the warmup epochs if using learning rate scheduler (AdamW optimizer)")
     parser.add_argument('--weight_decay', type=float, default=WEIGHT_DECAY,
                         help="the weight decay rate or L2 regularization term (AdamW/Adam optimizer)")
@@ -414,7 +428,7 @@ if __name__ == '__main__':
     parser.add_argument('--experiment_path', type=str, default=EXPERIMENT_PATH,
                         help='directory to save the experiments')
     parser.add_argument('--experiment_name', type=str, default=EXPERIMENT_NAME, help='experiment name')
-    parser.add_argument('--monitor_metric', type=str, default=VAL_LOSS_METRIC,
+    parser.add_argument('--monitor_metric', type=str, default=MONITORED_METRIC,
                         help=f'metric to monitor for early stopping and checkpointing (either {VAL_LOSS_METRIC} or'
                              f' {ACCURACY_METRIC}')
 

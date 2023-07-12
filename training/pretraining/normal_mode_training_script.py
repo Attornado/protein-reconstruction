@@ -19,19 +19,19 @@ from training.training_tools import ACCURACY_METRIC, VAL_LOSS_METRIC, seed_every
 
 
 BATCH_SIZE: final = 10
-EPOCHS: final = 100
-WARM_UP_EPOCHS: final = 30
+EPOCHS: final = 50
+WARM_UP_EPOCHS: final = 10
 WEIGHT_DECAY: final = 0  # try 1e-5
 OPTIMIZER: final = "adamw"
-EARLY_STOPPING_PATIENCE: final = 15
-EXPERIMENT_NAME: final = 'normal_mode_diff_pool_test0'
+EARLY_STOPPING_PATIENCE: final = 5
+EXPERIMENT_NAME: final = 'normal_mode_rev_gat_test0'
 EXPERIMENT_PATH: final = os.path.join(DATA_PATH, "fitted", "pretraining", "normal_modes")
 RESTORE_CHECKPOINT: final = True
 USE_DYNAMIC_BATCH: final = True
-DYNAMIC_BATCH_SIZE: final = 18000
+DYNAMIC_BATCH_SIZE: final = 5000
 IN_CHANNELS: final = 10
-CONF_COUNT_START: final = 0
-MODEL_NAME: final = "diff_pool"  # had GCN, GAT, SAGE, "diff_pool", "gunet", "grunet", "sage_c", "hier_rev"
+CONF_COUNT_START: final = 3
+MODEL_NAME: final = "rev_gat"  # had GCN, GAT, SAGE, "diff_pool", "gunet", "grunet", "sage_c", "hier_rev"
 MODEL_NAMES: final = frozenset([RevGATConvEncoder.MODEL_TYPE, RevSAGEConvEncoder.MODEL_TYPE, RevGCNEncoder.MODEL_TYPE,
                                 "diff_pool", "gunet", "grunet", "sage_c", "hier_rev"])
 MONITORED_METRIC: final = VAL_LOSS_METRIC
@@ -60,18 +60,18 @@ def main(args):
     optim = args.optimizer
 
     try:
-        path = os.path.join(args.experiment_path, args.experiment_name, "best_mse.pt")
-        best_model_acc = torch.load(path)["best_mse"]
+        path = os.path.join(args.experiment_path, args.experiment_name, "best_rmse.pt")
+        best_model_rmse = torch.load(path)["best_rmse"]
     except FileNotFoundError:
-        best_model_acc = -1
+        best_model_rmse = 9999999999999
 
-    print(f"Loaded best_model_acc {best_model_acc}")
+    print(f"Loaded best_model_rmse {best_model_rmse}")
     conf_count = 0
 
     grid_values = {
-        'dropout': [0.1, 0.3, 0.5],
+        'dropout': [0.4],
         "dense_num": [1, 2],  # [2, 3]
-        "learning_rate": [0.001, 0.0001, 0.00001]  # [0.0001, 0.00001, 0.000001]
+        "learning_rate": [0.001, 0.0001]  # [0.0001, 0.00001, 0.000001]
     }
 
     m = args.model_name  # model type
@@ -129,7 +129,7 @@ def main(args):
                     elif m == "sage_c":
                         model = EigenValueNMNet(
                             in_channels=in_channels,
-                            encoder_out_channels=emb,
+                            encoder_out_channels=emb*nl,
                             dense_units=dense_units,
                             dense_activations=dense_activations,
                             encoder_type=SAGE,
@@ -141,6 +141,41 @@ def main(args):
                         )
                         # Model with lr 1e-05 and config {'dropout': 0.0, 'model_name': 'sage_c', 'n_layers': 3,
                         # 'embedding_dim': 256, 'dense_num': 2, 'learning_rate': 1e-05}
+                    elif m == "rev_gat":
+                        model = EigenValueNMNet(
+                            in_channels=in_channels,
+                            encoder_out_channels=emb,
+                            dense_units=dense_units,
+                            dense_activations=dense_activations,
+                            encoder_type="rev_gat",
+                            dropout=d,  # should be 0.4,
+                            readout='max_pool',
+                            **{"num_convs": nl,  # should be 60
+                               "version": "v2",
+                               'edge_dim': None,
+                               'heads': 5,
+                               'concat': False,
+                               'num_groups': 2,
+                               'normalize_hidden': True}
+                        )
+                        # {'encoder_out_channels': 128,
+                        # 'dense_units': [128, 7],
+                        # 'dense_activations': ['gelu', 'linear'],
+                        # 'dropout': 0.3,
+                        # 'readout': 'max_pool',
+                        # 'forward_batch_index': False,
+                        # 'dim_features': 10,
+                        # 'encoder': {'constructor_params': {'in_channels': 10,
+                        #                                    'hidden_channels': 128,
+                        #                                    'out_channels': 128,
+                        #                                   'num_convs': 60,
+                        #                                    'dropout': 0.4,
+                        #                                    'version': 'v2',
+                        #                                    'edge_dim': None,
+                        #                                    'heads': 5,
+                        #                                    'concat': False,
+                        #                                    'num_groups': 2,
+                        #                                    'normalize_hidden': True}},
                     else:
                         if nl == 3:
                             pool_ratios = [0.9, 0.7, 0.6]
@@ -214,9 +249,12 @@ def main(args):
                                     mode="a")
                     if m == "diff_pool":
                         config = model.serialize_constructor_params()
-                    if m == "gunet" or m == "sage_c":
+                    if m == "gunet" or m == "sage_c" or m == "rev_gat":
                         config = model.serialize_constructor_params()
-                        del config["encoder"]["state_dict"]
+                        if "encoder" in config and "state_dict" in config["encoder"]:
+                            del config["encoder"]["state_dict"]
+                        if "state_dict" in config:
+                            del config["state_dict"]
                     logger.log(f"Launching training for experiment EigenValueNMNet n{conf_count} "
                                f"with config \n {config} with learning rate "
                                f"{lr}, \n stored in "
@@ -237,22 +275,22 @@ def main(args):
                         monitored_metric=args.monitor_metric
                     )
 
-                    if best_model_acc < metrics['accuracy']:
+                    if best_model_rmse > metrics['rmse']:
                         full_experiment_path = os.path.join(args.experiment_path, args.experiment_name)
                         logger = Logger(filepath=os.path.join(full_experiment_path, "trainlog.txt"),
                                         mode="a")
-                        logger.log(f"Found better model n{conf_count} than {best_model_acc} acc, "
-                                   f"with mse "
-                                   f"{metrics['accuracy']} acc, saving it in best dir")
-                        best_model_acc = metrics['accuracy']
+                        logger.log(f"Found better model n{conf_count} than {best_model_rmse} rmse, "
+                                   f"with rmse "
+                                   f"{metrics['rmse']} rmse, and metrics {metrics} saving it in best dir")
+                        best_model_rmse = metrics['rmse']
                         constructor_params = model.serialize_constructor_params()
                         state_dict = model.state_dict()
                         torch.save(state_dict, os.path.join(full_experiment_path,
                                                             "state_dict.pt"))
                         torch.save(constructor_params, os.path.join(full_experiment_path,
                                                                     "constructor_params.pt"))
-                        torch.save({"best_acc": best_model_acc},
-                                   os.path.join(full_experiment_path, "best_acc.pt"))
+                        torch.save({"best_rmse": best_model_rmse},
+                                   os.path.join(full_experiment_path, "best_rmse.pt"))
                         logger.log(f"Model with lr {lr} and config {config} \n trained and "
                                    f"stored to {full_experiment_path}.")
                     del model
@@ -266,8 +304,8 @@ if __name__ == '__main__':
     # Model's arguments
     parser.add_argument('--model_name', type=str, default=MODEL_NAME,
                         help=f"the model type (must be one of {MODEL_NAMES})")
-    parser.add_argument('--embedding_dim', type=int, default=100, help=f"the embedding size")
-    parser.add_argument('--num_layers', type=int, default=5, help=f"the number of layers")
+    parser.add_argument('--embedding_dim', type=int, default=128, help=f"the embedding size")
+    parser.add_argument('--num_layers', type=int, default=60, help=f"the number of layers")
     parser.add_argument('--in_channels', type=int, default=IN_CHANNELS, help="model input channels")
     parser.add_argument('--conf_count_start', type=int, default=CONF_COUNT_START,
                         help="the start grid search configuration")
