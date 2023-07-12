@@ -398,3 +398,6 @@ cython_debug/
 
 !/prova.py
 /prova.py
+tests/
+tests/*
+tests
