@@ -13,6 +13,7 @@ import einops
 from log.logger import Logger
 from models.layers import SerializableModule
 import torch.nn.functional as F
+from models.pretraining.encoders import RevGATConvEncoder
 from models.classification.sage import SAGEClassifier
 from models.classification.diffpool import DiffPoolEmbedding
 from models.pretraining.gunet import GraphUNetV2
@@ -25,7 +26,8 @@ from preprocessing.dataset.dataset_creation import NM_EIGENVALUES
 DIFF_POOL: final = "diff_pool"
 SAGE: final = "sage_c"
 GUNET: final = "gunet"
-ENCODER_TYPES: final = frozenset([DIFF_POOL, SAGE, GUNET])
+REV_GAT: final = RevGATConvEncoder.MODEL_TYPE
+ENCODER_TYPES: final = frozenset([DIFF_POOL, SAGE, GUNET, REV_GAT])
 N_EIGENVALUES_DEFAULT: final = 6
 LOSS: final = VAL_LOSS_METRIC
 MSE: final = "mse"
@@ -111,6 +113,9 @@ class EigenValueNMNet(SerializableModule):
         elif encoder_type == GUNET:
             encoder = GraphUNetV2(in_channels=in_channels, hidden_channels=encoder_out_channels,
                                   out_channels=encoder_out_channels, **encoder_params)
+        elif encoder_type == REV_GAT:
+            encoder = RevGATConvEncoder(in_channels=in_channels, hidden_channels=encoder_out_channels,
+                                        out_channels=encoder_out_channels, dropout=dropout, **encoder_params)
         else:
             raise ValueError(f"encoder_type must be one of {ENCODER_TYPES}. {encoder_type} given.")
         self._encoder: SerializableModule = encoder
@@ -179,7 +184,7 @@ class EigenValueNMNet(SerializableModule):
             "dense_units": self.dense_units,
             "dense_activations": self.dense_activations,
             "encoder_type": self.encoder_type,
-            "dropout": self.encoder_type,
+            "dropout": self.dropout,
             "readout": self.readout,
             "n_eigenvalues": self.n_eigenvalues
         }
@@ -230,6 +235,8 @@ class EigenValueNMNet(SerializableModule):
         lpl, el = 0, 0
         if self.encoder_type == DIFF_POOL:
             x, lpl, el = self._encoder(x, edge_index, batch_index, *args, **kwargs)
+        elif self.encoder_type == REV_GAT:
+            x = self._encoder(x, edge_index, *args, **kwargs)
         else:
             x = self._encoder(x, edge_index, batch_index, *args, **kwargs)
 
